@@ -205,7 +205,9 @@ function getUsers() {
     const state = loadRenewalState();
     if (state && state.skipUntil) {
         const skipDate = new Date(state.skipUntil);
-        if (skipDate > new Date()) {
+        if (skipDate.getFullYear() < 2024) {
+            console.log(`[Cache] skipUntil(${state.skipUntil}) year is abnormal, ignoring stale cache.`);
+        } else if (skipDate > new Date()) {
             console.log(`[Cache] Next available from last check: ${state.skipUntil}, skipping this run.`);
             process.exit(0);
         }

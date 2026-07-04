@@ -241,7 +241,9 @@ function getUsers() {
     const state = loadRenewalState();
     if (state && state.skipUntil) {
         const skipDate = new Date(state.skipUntil);
-        if (skipDate > new Date()) {
+        if (skipDate.getFullYear() < 2024) {
+            console.log(`[缓存] skipUntil(${state.skipUntil}) 年份异常, 忽略旧缓存。`);
+        } else if (skipDate > new Date()) {
             console.log(`[缓存] 上次检查显示下次可用时间: ${state.skipUntil}, 跳过本次运行。`);
             process.exit(0);
         }
