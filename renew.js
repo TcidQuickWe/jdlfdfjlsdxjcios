@@ -116,7 +116,7 @@ function saveRenewalState(skipUntilISO) {
 
 function parseNextDate(dateStr) {
     let d = new Date(dateStr);
-    if (!isNaN(d.getTime())) return d;
+    if (!isNaN(d.getTime()) && d.getFullYear() >= 2024) return d;
     d = new Date(dateStr + ' ' + new Date().getFullYear());
     if (!isNaN(d.getTime())) return d;
     return new Date(Date.now() + 24 * 60 * 60 * 1000);
