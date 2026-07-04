@@ -1,0 +1,88 @@
+version: 2.1
+
+orbs:
+  browser-tools: circleci/browser-tools@1.4
+
+workflows:
+  nightly:
+    triggers:
+      - schedule:
+          cron: "0 0 * * *"
+          filters:
+            branches:
+              only:
+                - main
+    jobs:
+      - renew
+
+  manual:
+    jobs:
+      - renew
+
+jobs:
+  renew:
+    machine:
+      image: ubuntu-2204:2024.01.1
+    steps:
+      - checkout
+      - browser-tools/install-chrome
+      - run:
+          name: Install Dependencies
+          command: |
+            sudo apt-get update
+            sudo apt-get install -y xvfb
+            npm install
+            npx playwright install-deps chrome
+      - run:
+          name: Setup hy2 Proxy
+          command: |
+            if [ -z "$HY2_URL" ]; then
+              echo "HY2_URL not set, skipping proxy"
+              exit 0
+            fi
+            curl -sL https://github.com/apernet/hysteria/releases/latest/download/hysteria-linux-amd64 -o hysteria
+            chmod +x hysteria
+            node -e "
+            var u = new URL(process.env.HY2_URL);
+            var c = {
+              server: u.hostname + ':' + (u.port || 443),
+              auth: u.username,
+              tls: { sni: u.searchParams.get('sni') || u.hostname },
+              socks5: { listen: '127.0.0.1:1080' }
+            };
+            c.tls.insecure = true;
+            var pin = u.searchParams.get('pinSHA256');
+            if (pin) c.tls.pinSHA256 = pin;
+            require('fs').writeFileSync('hy2-config.json', JSON.stringify(c));
+            "
+      - run:
+          name: Start hy2 Client
+          command: |
+            if [ -z "$HY2_URL" ]; then exit 0; fi
+            echo "=== Testing hy2 connection ==="
+            timeout 5 ./hysteria client -c hy2-config.json 2>&1 || echo "hy2 test attempt finished (expected if no traffic)"
+            echo "=== Starting hy2 in background ==="
+            ./hysteria client -c hy2-config.json > /tmp/hy2.log 2>&1 &
+            sleep 4
+            echo "=== Checking SOCKS5 port ==="
+            ss -tlnp | grep 1080 && echo "OK: port 1080 is listening" || echo "FAIL: port 1080 not listening"
+            echo "=== hy2 log ==="
+            cat /tmp/hy2.log 2>/dev/null || echo "(no log)"
+      - restore_cache:
+          keys:
+            - renewal-state-cache
+      - run:
+          name: Run Renew Script
+          command: |
+            if [ -n "$HY2_URL" ]; then
+              export HTTP_PROXY=socks5://127.0.0.1:1080
+            fi
+            xvfb-run --auto-servernum --server-args="-screen 0 1280x720x24" node action_renew.js
+      - save_cache:
+          key: renewal-state-cache
+          paths:
+            - renewal-state.json
+      - store_artifacts:
+          path: screenshots/
+          destination: screenshots
+          when: always
