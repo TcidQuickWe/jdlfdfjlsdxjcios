@@ -5,6 +5,7 @@ const path = require('path');
 const { spawn } = require('child_process');
 const axios = require('axios');
 const http = require('http');
+const { INJECTED_SCRIPT, bypassTurnstile } = require('./turnstile/turnstile');
 
 // 启用 stealth 插件
 chromium.use(stealth);
@@ -34,70 +35,7 @@ if (HTTP_PROXY) {
 }
 
 
-// --- injected.js 核心逻辑 ---
-// 这个脚本会被注入到每个 Frame 中。它劫持 attachShadow 以捕获 Turnstile 的 checkbox，
-// 计算其相对于 Frame 视口的位置比例，并存入 window.__turnstile_data 供外部读取。
-const INJECTED_SCRIPT = `
-(function() {
-    // 只在 iframe 中运行（Turnstile 通常在 iframe 里）
-    if (window.self === window.top) return;
-
-    // 1. 模拟鼠标屏幕坐标 (尝试保留这个优化)
-    try {
-        function getRandomInt(min, max) {
-            return Math.floor(Math.random() * (max - min + 1)) + min;
-        }
-        let screenX = getRandomInt(800, 1200);
-        let screenY = getRandomInt(400, 600);
-        
-        Object.defineProperty(MouseEvent.prototype, 'screenX', { value: screenX });
-        Object.defineProperty(MouseEvent.prototype, 'screenY', { value: screenY });
-    } catch (e) { 
-        // 忽略错误，如果不允许修改也没关系，不影响主流程
-    }
-
-    // 2. 简单的 attachShadow Hook (回退到这个版本，确保能找到元素)
-    try {
-        const originalAttachShadow = Element.prototype.attachShadow;
-        
-        Element.prototype.attachShadow = function(init) {
-            const shadowRoot = originalAttachShadow.call(this, init);
-            
-            if (shadowRoot) {
-                const checkAndReport = () => {
-                    // 尝试在 Shadow Root 中查找 checkbox
-                    const checkbox = shadowRoot.querySelector('input[type="checkbox"]');
-                    if (checkbox) {
-                        const rect = checkbox.getBoundingClientRect();
-                        // 确保元素已渲染且可见
-                        if (rect.width > 0 && rect.height > 0 && window.innerWidth > 0 && window.innerHeight > 0) {
-                            const xRatio = (rect.left + rect.width / 2) / window.innerWidth;
-                            const yRatio = (rect.top + rect.height / 2) / window.innerHeight;
-                            
-                            // 暴露数据给 Playwright
-                            window.__turnstile_data = { xRatio, yRatio };
-                            return true;
-                        }
-                    }
-                    return false;
-                };
-
-                // 立即检查一次
-                if (!checkAndReport()) {
-                    // 如果没找到，监听 DOM 变化
-                    const observer = new MutationObserver(() => {
-                        if (checkAndReport()) observer.disconnect();
-                    });
-                    observer.observe(shadowRoot, { childList: true, subtree: true });
-                }
-            }
-            return shadowRoot;
-        };
-    } catch (e) {
-        console.error('[Injected] Error hooking attachShadow:', e);
-    }
-})();
-`;
+// INJECTED_SCRIPT moved to turnstile/turnstile.js
 
 // 辅助函数：检测代理是否可用
 async function checkProxy() {
@@ -203,67 +141,7 @@ function getUsers() {
     }
 }
 
-/**
- * 核心功能：遍历所有 Frames，查找被注入脚本标记的 Turnstile 坐标，
- * 计算绝对屏幕坐标，并使用 CDP 发送原生鼠标点击事件。
- */
-async function attemptTurnstileCdp(page) {
-    const frames = page.frames();
-    for (const frame of frames) {
-        try {
-            // 检查当前 Frame 是否捕获到了 Turnstile 数据
-            const data = await frame.evaluate(() => window.__turnstile_data).catch(() => null);
-
-            if (data) {
-                console.log('>> Found Turnstile in frame. Ratios:', data);
-
-                // 获取 iframe 元素在主页面中的位置
-                const iframeElement = await frame.frameElement();
-                if (!iframeElement) continue;
-
-                const box = await iframeElement.boundingBox();
-                if (!box) continue;
-
-                // 计算绝对坐标：iframe 左上角 + (iframe 宽/高 * 比例)
-                const clickX = box.x + (box.width * data.xRatio);
-                const clickY = box.y + (box.height * data.yRatio);
-
-                console.log(`>> Calculated absolute click coordinates: (${clickX.toFixed(2)}, ${clickY.toFixed(2)})`);
-
-                // 创建 CDP 会话并发送点击命令
-                const client = await page.context().newCDPSession(page);
-
-                // 1. Mouse Pressed
-                await client.send('Input.dispatchMouseEvent', {
-                    type: 'mousePressed',
-                    x: clickX,
-                    y: clickY,
-                    button: 'left',
-                    clickCount: 1
-                });
-
-                // 模拟人类点击持续时间 (50ms - 150ms)
-                await new Promise(r => setTimeout(r, 50 + Math.random() * 100));
-
-                // 2. Mouse Released
-                await client.send('Input.dispatchMouseEvent', {
-                    type: 'mouseReleased',
-                    x: clickX,
-                    y: clickY,
-                    button: 'left',
-                    clickCount: 1
-                });
-
-                console.log('>> CDP Click sent successfully.');
-                await client.detach();
-                return true; // 成功点击
-            }
-        } catch (e) {
-            // 忽略 Frame 访问错误（跨域等）
-        }
-    }
-    return false;
-}
+// attemptTurnstileCdp moved to turnstile/turnstile.js
 
 (async () => {
     const users = getUsers();
@@ -361,35 +239,15 @@ async function attemptTurnstileCdp(page) {
 
                 // --- Cloudflare Turnstile Bypass for Login ---
                 console.log('   >> Checking for Turnstile before login (using CDP bypass)...');
-                let cdpClickResult = false;
-                for (let findAttempt = 0; findAttempt < 15; findAttempt++) {
-                    cdpClickResult = await attemptTurnstileCdp(page);
-                    if (cdpClickResult) break;
-                    // console.log(`   >> [Login Find Attempt ${findAttempt + 1}/15] Turnstile checkbox not found yet...`);
-                    await page.waitForTimeout(1000);
-                }
-
-                if (cdpClickResult) {
-                    console.log('   >> CDP Click active for login. Waiting up to 10s for Cloudflare success...');
-                    // Wait for the "Success!" mark in any cloudflare frame
-                    for (let waitSec = 0; waitSec < 10; waitSec++) {
-                        const frames = page.frames();
-                        let isSuccess = false;
-                        for (const f of frames) {
-                            if (f.url().includes('cloudflare')) {
-                                try {
-                                    if (await f.getByText('Success!', { exact: false }).isVisible({ timeout: 500 })) {
-                                        isSuccess = true;
-                                        break;
-                                    }
-                                } catch (e) { }
-                            }
-                        }
-                        if (isSuccess) {
-                            console.log('   >> Turnstile verification successful before login.');
-                            break;
-                        }
-                        await page.waitForTimeout(1000);
+                const loginTurnstile = await bypassTurnstile(page, {
+                    findAttempts: 15,
+                    successTimeoutMs: 10000,
+                    label: 'Login'
+                });
+                if (loginTurnstile.clicked) {
+                    console.log('   >> Turnstile clicked for login.');
+                    if (loginTurnstile.success) {
+                        console.log('   >> Turnstile verification successful before login.');
                     }
                 } else {
                     console.log('   >> No Turnstile detected or clicked before login, proceeding anyway...');
@@ -465,35 +323,14 @@ async function attemptTurnstileCdp(page) {
 
                     // B. 找 Turnstile (小重试)
                     console.log('Checking for Turnstile (using CDP bypass)...');
-                    let cdpClickResult = false;
-                    for (let findAttempt = 0; findAttempt < 30; findAttempt++) {
-                        cdpClickResult = await attemptTurnstileCdp(page);
-                        if (cdpClickResult) break;
-                        console.log(`   >> [Find Attempt ${findAttempt + 1}/30] Turnstile checkbox not found yet...`);
-                        await page.waitForTimeout(1000);
-                    }
-
-                    let isTurnstileSuccess = false;
-                    if (cdpClickResult) {
-                        console.log('   >> CDP Click active. Waiting 8s for Cloudflare check...');
-                        await page.waitForTimeout(8000);
-                    } else {
-                        console.log('   >> Turnstile checkbox not confirmed after retries.');
-                    }
-
-                    // C. 检查 Success 标志
-                    const frames = page.frames();
-                    for (const f of frames) {
-                        if (f.url().includes('cloudflare')) {
-                            try {
-                                if (await f.getByText('Success!', { exact: false }).isVisible({ timeout: 500 })) {
-                                    console.log('   >> Detected "Success!" in Turnstile iframe.');
-                                    isTurnstileSuccess = true;
-                                    break;
-                                }
-                            } catch (e) { }
-                        }
-                    }
+                    const renewTurnstile = await bypassTurnstile(page, {
+                        findAttempts: 30,
+                        waitAfterClickMs: 8000,
+                        waitForSuccess: true,
+                        successTimeoutMs: 8000,
+                        label: 'Renew'
+                    });
+                    const isTurnstileSuccess = renewTurnstile.success;
 
                     // D. 准备点击确认
                     const confirmBtn = modal.getByRole('button', { name: 'Renew' });

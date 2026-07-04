@@ -2,38 +2,63 @@ name: Katabump Auto Renew
 
 on:
   schedule:
-    # 每天 UTC 0点 (北京时间 8点) 运行
     - cron: '0 0 * * *'
-  workflow_dispatch: # 允许手动触发
+  workflow_dispatch:
 
 jobs:
   renew:
     runs-on: ubuntu-latest
-    
+
     steps:
     - uses: actions/checkout@v4
-    
+
     - name: Setup Node.js
       uses: actions/setup-node@v4
       with:
         node-version: '20'
-        
+
     - name: Install Dependencies
       run: |
         sudo apt-get update
         sudo apt-get install -y xvfb
         npm install
         npx playwright install-deps chrome
-      
+
+    - name: Setup hy2 Proxy
+      run: |
+        curl -sL https://github.com/apernet/hysteria/releases/latest/download/hysteria-linux-amd64 -o hysteria
+        chmod +x hysteria
+
+        node -e "
+        const u = new URL(process.env.HY2_URL);
+        const c = {
+          server: u.hostname + ':' + (u.port || 443),
+          auth: u.username,
+          tls: { sni: u.searchParams.get('sni') || u.hostname },
+          socks5: { listen: '127.0.0.1:1080' }
+        };
+        const ins = u.searchParams.get('insecure');
+        if (ins === '1') c.tls.insecure = true;
+        const ai = u.searchParams.get('allowInsecure');
+        if (ai === '1') c.tls.allowInsecure = true;
+        const pin = u.searchParams.get('pinSHA256');
+        if (pin) c.tls.pinSHA256 = pin;
+        require('fs').writeFileSync('hy2-config.json', JSON.stringify(c));
+        "
+      env:
+        HY2_URL: ${{ secrets.HY2_URL }}
+
+    - name: Start hy2 Client
+      run: |
+        ./hysteria client -c hy2-config.json &
+        sleep 3
+
     - name: Run Renew Script
       env:
-        # 将 USERS_JSON 配置在 GitHub Repository Secrets 中
-        # 格式: [{"username": "xxx", "password": "xxx"}, ...]
         USERS_JSON: ${{ secrets.USERS_JSON }}
-        HTTP_PROXY: ${{ secrets.HTTP_PROXY }}
+        HTTP_PROXY: socks5://127.0.0.1:1080
         TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
         TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
-      # 使用 xvfb-run 模拟有头环境运行
       run: xvfb-run --auto-servernum --server-args="-screen 0 1280x720x24" node action_renew.js
 
     - name: Upload Screenshots
