@@ -55,8 +55,15 @@ jobs:
     - name: Start hy2 Client
       if: steps.hy2.outputs.proxy_active == 'true'
       run: |
-        ./hysteria client -c hy2-config.json &
-        sleep 3
+        echo "=== Testing hy2 connection ==="
+        timeout 5 ./hysteria client -c hy2-config.json 2>&1 || echo "hy2 test attempt finished (expected if no traffic)"
+        echo "=== Starting hy2 in background ==="
+        ./hysteria client -c hy2-config.json > /tmp/hy2.log 2>&1 &
+        sleep 4
+        echo "=== Checking SOCKS5 port ==="
+        ss -tlnp | grep 1080 && echo "OK: port 1080 is listening" || echo "FAIL: port 1080 not listening"
+        echo "=== hy2 log ==="
+        cat /tmp/hy2.log 2>/dev/null || echo "(no log)"
 
     - name: Run Renew Script
       env:
