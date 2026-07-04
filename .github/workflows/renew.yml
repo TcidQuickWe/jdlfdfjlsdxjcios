@@ -25,30 +25,35 @@ jobs:
         npx playwright install-deps chrome
 
     - name: Setup hy2 Proxy
+      id: hy2
       run: |
+        if [ -z "$HY2_URL" ]; then
+          echo "HY2_URL not set, skipping proxy"
+          echo "proxy_active=false" >> "$GITHUB_OUTPUT"
+          exit 0
+        fi
         curl -sL https://github.com/apernet/hysteria/releases/latest/download/hysteria-linux-amd64 -o hysteria
         chmod +x hysteria
-
         node -e "
-        const u = new URL(process.env.HY2_URL);
-        const c = {
+        var u = new URL(process.env.HY2_URL);
+        var c = {
           server: u.hostname + ':' + (u.port || 443),
           auth: u.username,
           tls: { sni: u.searchParams.get('sni') || u.hostname },
           socks5: { listen: '127.0.0.1:1080' }
         };
-        const ins = u.searchParams.get('insecure');
-        if (ins === '1') c.tls.insecure = true;
-        const ai = u.searchParams.get('allowInsecure');
-        if (ai === '1') c.tls.allowInsecure = true;
-        const pin = u.searchParams.get('pinSHA256');
+        if (u.searchParams.get('insecure') === '1') c.tls.insecure = true;
+        if (u.searchParams.get('allowInsecure') === '1') c.tls.allowInsecure = true;
+        var pin = u.searchParams.get('pinSHA256');
         if (pin) c.tls.pinSHA256 = pin;
         require('fs').writeFileSync('hy2-config.json', JSON.stringify(c));
         "
+        echo "proxy_active=true" >> "$GITHUB_OUTPUT"
       env:
         HY2_URL: ${{ secrets.HY2_URL }}
 
     - name: Start hy2 Client
+      if: steps.hy2.outputs.proxy_active == 'true'
       run: |
         ./hysteria client -c hy2-config.json &
         sleep 3
@@ -56,7 +61,7 @@ jobs:
     - name: Run Renew Script
       env:
         USERS_JSON: ${{ secrets.USERS_JSON }}
-        HTTP_PROXY: socks5://127.0.0.1:1080
+        HTTP_PROXY: ${{ steps.hy2.outputs.proxy_active == 'true' && 'socks5://127.0.0.1:1080' || '' }}
         TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
         TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
       run: xvfb-run --auto-servernum --server-args="-screen 0 1280x720x24" node action_renew.js
