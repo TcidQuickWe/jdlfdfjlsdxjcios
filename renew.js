@@ -41,6 +41,14 @@ if (HTTP_PROXY) {
 async function checkProxy() {
     if (!PROXY_CONFIG) return true;
 
+    const protocol = new URL(PROXY_CONFIG.server).protocol;
+
+    // SOCKS5: Node.js http/axios 不支持, 但 Chrome 原生支持, 跳过验证
+    if (protocol.startsWith('socks')) {
+        console.log('[Proxy] SOCKS proxy detected, skipping HTTP validation.');
+        return true;
+    }
+
     console.log('[Proxy] Validating proxy connection...');
     try {
         const axiosConfig = {
@@ -59,7 +67,6 @@ async function checkProxy() {
             };
         }
 
-        // 尝试访问一个可靠的测试地址 (Cloudflare Trace 或者 Google)
         await axios.get('https://www.google.com', axiosConfig);
         console.log('[Proxy] Connection successful!');
         return true;

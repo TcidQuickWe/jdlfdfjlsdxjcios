@@ -77,6 +77,14 @@ if (HTTP_PROXY) {
 async function checkProxy() {
     if (!PROXY_CONFIG) return true;
 
+    const protocol = new URL(PROXY_CONFIG.server).protocol;
+
+    // SOCKS5: Node.js http/axios 不支持, 但 Chrome 原生支持, 跳过验证
+    if (protocol.startsWith('socks')) {
+        console.log('[代理] 检测到 SOCKS 代理, 跳过 HTTP 验证。');
+        return true;
+    }
+
     console.log('[代理] 正在验证代理连接...');
     try {
         const axiosConfig = {
