@@ -75,13 +75,16 @@ if (HTTP_PROXY) {
 
 // 辅助函数：检测代理是否可用
 async function checkProxy() {
-    if (!PROXY_CONFIG) return true;
+    if (!PROXY_CONFIG) {
+        console.log('[DEBUG] checkProxy: no proxy config');
+        return true;
+    }
 
-    const protocol = new URL(PROXY_CONFIG.server).protocol;
+    const proto = new URL(PROXY_CONFIG.server).protocol;
+    console.log('[DEBUG] checkProxy: protocol=' + proto);
 
-    // SOCKS5: Node.js http/axios 不支持, 但 Chrome 原生支持, 跳过验证
-    if (protocol.startsWith('socks')) {
-        console.log('[代理] 检测到 SOCKS 代理, 跳过 HTTP 验证。');
+    if (proto === 'socks5:' || proto === 'socks5h:' || proto === 'socks4:') {
+        console.log('[代理] SOCKS proxy detected, skipping HTTP validation.');
         return true;
     }
 
@@ -107,7 +110,7 @@ async function checkProxy() {
         console.log('[代理] 连接成功！');
         return true;
     } catch (error) {
-        console.error(`[代理] 连接失败: ${error.message}`);
+        console.error('[代理] 连接失败: ' + error.message);
         return false;
     }
 }
