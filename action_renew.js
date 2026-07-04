@@ -245,6 +245,14 @@ function getUsers() {
         }
     }
 
+    // 随机延迟 0-30 分钟, 避免固定时间模式被检测
+    const randomDelayMs = Math.floor(Math.random() * 1800000);
+    const delayMin = Math.round(randomDelayMs / 60000);
+    if (delayMin > 0) {
+        console.log(`[延迟] 随机等待 ${delayMin} 分钟...`);
+        await new Promise(r => setTimeout(r, randomDelayMs));
+    }
+
     await launchChrome();
 
     console.log(`正在连接 Chrome...`);
