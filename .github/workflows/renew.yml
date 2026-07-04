@@ -65,6 +65,13 @@ jobs:
         echo "=== hy2 log ==="
         cat /tmp/hy2.log 2>/dev/null || echo "(no log)"
 
+    - name: Restore renewal state cache
+      id: cache-renewal
+      uses: actions/cache@v4
+      with:
+        path: renewal-state.json
+        key: renewal-state
+
     - name: Run Renew Script
       env:
         USERS_JSON: ${{ secrets.USERS_JSON }}

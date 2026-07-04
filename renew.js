@@ -90,6 +90,38 @@ function checkPort(port) {
     });
 }
 
+// --- 续期状态缓存 ---
+const STATE_FILE = 'renewal-state.json';
+
+function loadRenewalState() {
+    try {
+        if (fs.existsSync(STATE_FILE)) {
+            return JSON.parse(fs.readFileSync(STATE_FILE, 'utf8'));
+        }
+    } catch (e) { }
+    return null;
+}
+
+function saveRenewalState(skipUntilISO) {
+    try {
+        fs.writeFileSync(STATE_FILE, JSON.stringify({
+            skipUntil: skipUntilISO,
+            updatedAt: new Date().toISOString()
+        }));
+        console.log(`[Cache] Renewal state saved, skipping until: ${skipUntilISO}`);
+    } catch (e) {
+        console.error('[Cache] Failed to save state:', e.message);
+    }
+}
+
+function parseNextDate(dateStr) {
+    let d = new Date(dateStr);
+    if (!isNaN(d.getTime())) return d;
+    d = new Date(dateStr + ' ' + new Date().getFullYear());
+    if (!isNaN(d.getTime())) return d;
+    return new Date(Date.now() + 24 * 60 * 60 * 1000);
+}
+
 // 辅助函数：启动原生 Chrome
 async function launchNativeChrome() {
     console.log('Checking if Chrome is already running on port ' + DEBUG_PORT + '...');
@@ -166,6 +198,16 @@ function getUsers() {
         if (!isValid) {
             console.error('[Proxy] Aborting due to invalid proxy.');
             process.exit(1);
+        }
+    }
+
+    // 检查续期缓存
+    const state = loadRenewalState();
+    if (state && state.skipUntil) {
+        const skipDate = new Date(state.skipUntil);
+        if (skipDate > new Date()) {
+            console.log(`[Cache] Next available from last check: ${state.skipUntil}, skipping this run.`);
+            process.exit(0);
         }
     }
 
@@ -381,6 +423,12 @@ function getUsers() {
                                     let dateStr = match ? match[1] : 'Unknown Date';
                                     console.log(`   >> ⏳ Cannot renew yet. Next renewal available as of: ${dateStr}`);
 
+                                    // 保存下次可用时间到缓存
+                                    if (dateStr !== 'Unknown Date') {
+                                        const nextDate = parseNextDate(dateStr);
+                                        saveRenewalState(nextDate.toISOString());
+                                    }
+
                                     // Treat this as a "successful" run so we don't retry loop
                                     renewSuccess = true;
                                     // Manually close modal
@@ -408,6 +456,9 @@ function getUsers() {
                         await page.waitForTimeout(2000);
                         if (!await modal.isVisible()) {
                             console.log('   >> ✅ Modal closed. Renew successful!');
+                            // 续期成功: 4 天后再检查
+                            const nextRenew = new Date(Date.now() + 4 * 24 * 60 * 60 * 1000);
+                            saveRenewalState(nextRenew.toISOString());
                             renewSuccess = true;
                             // 成功了！退出循环
                             break;

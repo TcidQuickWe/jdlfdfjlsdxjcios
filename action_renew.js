@@ -115,6 +115,38 @@ async function checkProxy() {
     }
 }
 
+// --- 续期状态缓存 ---
+const STATE_FILE = 'renewal-state.json';
+
+function loadRenewalState() {
+    try {
+        if (fs.existsSync(STATE_FILE)) {
+            return JSON.parse(fs.readFileSync(STATE_FILE, 'utf8'));
+        }
+    } catch (e) { }
+    return null;
+}
+
+function saveRenewalState(skipUntilISO) {
+    try {
+        fs.writeFileSync(STATE_FILE, JSON.stringify({
+            skipUntil: skipUntilISO,
+            updatedAt: new Date().toISOString()
+        }));
+        console.log(`[缓存] 续期状态已保存, 下次跳过至: ${skipUntilISO}`);
+    } catch (e) {
+        console.error('[缓存] 保存状态失败:', e.message);
+    }
+}
+
+function parseNextDate(dateStr) {
+    let d = new Date(dateStr);
+    if (!isNaN(d.getTime())) return d;
+    d = new Date(dateStr + ' ' + new Date().getFullYear());
+    if (!isNaN(d.getTime())) return d;
+    return new Date(Date.now() + 24 * 60 * 60 * 1000);
+}
+
 function checkPort(port) {
     return new Promise((resolve) => {
         const req = http.get(`http://localhost:${port}/json/version`, (res) => {
@@ -200,6 +232,16 @@ function getUsers() {
         if (!isValid) {
             console.error('[代理] 代理无效，终止运行。');
             process.exit(1);
+        }
+    }
+
+    // 检查续期缓存: 如果还没到可用时间, 直接跳过
+    const state = loadRenewalState();
+    if (state && state.skipUntil) {
+        const skipDate = new Date(state.skipUntil);
+        if (skipDate > new Date()) {
+            console.log(`[缓存] 上次检查显示下次可用时间: ${state.skipUntil}, 跳过本次运行。`);
+            process.exit(0);
         }
     }
 
@@ -404,6 +446,12 @@ function getUsers() {
                                     let dateStr = match ? match[1] : 'Unknown Date';
                                     console.log(`   >> ⏳ 暂无法续期。下次可用时间: ${dateStr}`);
 
+                                    // 保存下次可用时间到缓存
+                                    if (dateStr !== 'Unknown Date') {
+                                        const nextDate = parseNextDate(dateStr);
+                                        saveRenewalState(nextDate.toISOString());
+                                    }
+
                                     // 截图证明
                                     const fs = require('fs');
                                     const path = require('path');
@@ -450,6 +498,9 @@ function getUsers() {
                             try { await page.screenshot({ path: successShotPath, fullPage: true }); } catch (e) { }
 
                             await sendTelegramMessage(`✅ *续期成功*\n用户: ${user.username}\n状态: 服务器已成功续期！`, successShotPath);
+                            // 续期成功: 4 天后再检查
+                            const nextRenew = new Date(Date.now() + 4 * 24 * 60 * 60 * 1000);
+                            saveRenewalState(nextRenew.toISOString());
                             renewSuccess = true;
                             break;
                         } else {
