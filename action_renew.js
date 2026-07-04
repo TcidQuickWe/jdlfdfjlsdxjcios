@@ -121,7 +121,9 @@ const STATE_FILE = 'renewal-state.json';
 function loadRenewalState() {
     try {
         if (fs.existsSync(STATE_FILE)) {
-            return JSON.parse(fs.readFileSync(STATE_FILE, 'utf8'));
+            const raw = fs.readFileSync(STATE_FILE, 'utf8');
+            console.log('[DEBUG] renewal-state.json 内容:', raw);
+            return JSON.parse(raw);
         }
     } catch (e) { }
     return null;
