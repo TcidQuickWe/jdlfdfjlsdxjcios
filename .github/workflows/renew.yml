@@ -42,8 +42,8 @@ jobs:
           tls: { sni: u.searchParams.get('sni') || u.hostname },
           socks5: { listen: '127.0.0.1:1080' }
         };
-        if (u.searchParams.get('insecure') === '1') c.tls.insecure = true;
-        if (u.searchParams.get('allowInsecure') === '1') c.tls.allowInsecure = true;
+        // server cert uses legacy Common Name (no SANs), skip verification
+        c.tls.insecure = true;
         var pin = u.searchParams.get('pinSHA256');
         if (pin) c.tls.pinSHA256 = pin;
         require('fs').writeFileSync('hy2-config.json', JSON.stringify(c));
