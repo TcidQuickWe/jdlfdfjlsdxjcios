@@ -175,7 +175,7 @@ async function launchChrome() {
         '--window-size=1280,720',
         '--no-sandbox',
         '--disable-setuid-sandbox',
-        '--user-data-dir=/tmp/chrome_user_data' // 必须指定用户数据目录，否则远程调试可能失败
+        '--user-data-dir=/tmp/chrome_user_data'
     ];
 
     if (PROXY_CONFIG) {

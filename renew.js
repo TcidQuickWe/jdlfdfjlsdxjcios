@@ -11,7 +11,7 @@ const { INJECTED_SCRIPT, bypassTurnstile } = require('./turnstile/turnstile');
 chromium.use(stealth);
 
 const CHROME_PATH = "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe";
-const USER_DATA_DIR = path.join(__dirname, 'ChromeData_Katabump');
+const USER_DATA_DIR = path.join(__dirname, 'ChromeData');
 const DEBUG_PORT = 9222;
 const HEADLESS = false;
 // const HTTP_PROXY = ""

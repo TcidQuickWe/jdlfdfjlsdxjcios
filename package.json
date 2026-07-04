@@ -1,7 +1,7 @@
 {
-    "name": "katabump-automation",
+    "name": "server-renewal",
     "version": "1.0.0",
-    "description": "Automation script for Katabump renewal",
+    "description": "Automated server renewal script",
     "main": "renew.js",
     "scripts": {
         "start": "node renew.js"
