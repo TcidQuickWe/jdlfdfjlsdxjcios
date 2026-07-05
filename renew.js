@@ -203,15 +203,16 @@ function getUsers() {
 
     // 检查续期缓存
     const state = loadRenewalState();
-    let staleCache = false;
+    let staleCache = true;
     if (state && state.skipUntil) {
         const skipDate = new Date(state.skipUntil);
         if (skipDate.getFullYear() < 2024) {
             console.log(`[Cache] skipUntil(${state.skipUntil}) year is abnormal, ignoring stale cache.`);
-            staleCache = true;
         } else if (skipDate > new Date()) {
             console.log(`[Cache] Next available from last check: ${state.skipUntil}, skipping this run.`);
             process.exit(0);
+        } else {
+            staleCache = false;
         }
     }
 

@@ -222,15 +222,16 @@ function getUsers() {
 
     // 检查续期缓存: 如果还没到可用时间, 直接跳过
     const state = loadRenewalState();
-    let staleCache = false;
+    let staleCache = true;
     if (state && state.skipUntil) {
         const skipDate = new Date(state.skipUntil);
         if (skipDate.getFullYear() < 2024) {
             console.log(`[缓存] skipUntil(${state.skipUntil}) 年份异常, 忽略旧缓存。`);
-            staleCache = true;
         } else if (skipDate > new Date()) {
             console.log(`[缓存] 上次检查显示下次可用时间: ${state.skipUntil}, 跳过本次运行。`);
             process.exit(0);
+        } else {
+            staleCache = false;
         }
     }
 
