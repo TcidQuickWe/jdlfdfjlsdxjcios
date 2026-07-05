@@ -329,6 +329,9 @@ function getUsers() {
                     const errorMsg = page.getByText('Incorrect password or no account');
                     if (await errorMsg.isVisible({ timeout: 3000 })) {
                         console.error(`   >> ❌ Login failed: incorrect password for user ${i + 1}`);
+                        const ts = Date.now(); const sd = path.join(__dirname, 'screenshots');
+                        if (!fs.existsSync(sd)) fs.mkdirSync(sd, { recursive: true });
+                        try { await page.screenshot({ path: path.join(sd, `${ts}_login_fail.png`), fullPage: true }); } catch (e) { }
                         continue;
                     }
                 } catch (e) { }
@@ -397,6 +400,11 @@ function getUsers() {
                     const confirmBtn = modal.getByRole('button', { name: 'Renew' });
                     if (await confirmBtn.isVisible()) {
 
+                        // User Request: Screenshot BEFORE final click
+                        const ts = Date.now(); const sd = path.join(__dirname, 'screenshots');
+                        if (!fs.existsSync(sd)) fs.mkdirSync(sd, { recursive: true });
+                        try { await page.screenshot({ path: path.join(sd, `${ts}_turnstile_${attempt}.png`), fullPage: true }); } catch (e) { }
+
                         // User Request: 找不到的话这个循环直接下一步点击renew，然后检测有没有Please complete the captcha to continue
                         console.log('   >> Clicking Renew confirm button (regardless of Turnstile status)...');
                         await confirmBtn.click();
@@ -433,6 +441,10 @@ function getUsers() {
                                         saveRenewalState(nextDate.toISOString());
                                     }
 
+                                    const ts = Date.now(); const sd = path.join(__dirname, 'screenshots');
+                                    if (!fs.existsSync(sd)) fs.mkdirSync(sd, { recursive: true });
+                                    try { await page.screenshot({ path: path.join(sd, `${ts}_skip.png`), fullPage: true }); } catch (e) { }
+
                                     // Treat this as a "successful" run so we don't retry loop
                                     renewSuccess = true;
                                     // Manually close modal
@@ -460,6 +472,10 @@ function getUsers() {
                         await page.waitForTimeout(2000);
                         if (!await modal.isVisible()) {
                             console.log('   >> ✅ Modal closed. Renew successful!');
+                            const ts = Date.now(); const sd = path.join(__dirname, 'screenshots');
+                            if (!fs.existsSync(sd)) fs.mkdirSync(sd, { recursive: true });
+                            try { await page.screenshot({ path: path.join(sd, `${ts}_success.png`), fullPage: true }); } catch (e) { }
+
                             // 续期成功: 4 天后再检查
                             const nextRenew = new Date(Date.now() + 4 * 24 * 60 * 60 * 1000);
                             saveRenewalState(nextRenew.toISOString());
@@ -490,7 +506,7 @@ function getUsers() {
             }
 
         } catch (err) {
-            console.error(`Error processing user ${user.username}:`, err);
+            console.error(`Error processing user ${i + 1}:`, err);
         }
 
         console.log(`Finished User ${i + 1}\n`);

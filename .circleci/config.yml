@@ -82,3 +82,7 @@ jobs:
           key: renewal-state-cache-{{ .BuildNum }}
           paths:
             - renewal-state.json
+      - store_artifacts:
+          path: screenshots/
+          destination: screenshots
+          when: always
