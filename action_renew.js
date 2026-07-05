@@ -7,13 +7,6 @@ const { spawn } = require('child_process');
 const http = require('http');
 const { INJECTED_SCRIPT, bypassTurnstile } = require('./turnstile/turnstile');
 
-const DEBUG_SCREENSHOT = process.env.DEBUG_SCREENSHOT === 'true';
-
-if (DEBUG_SCREENSHOT) {
-    const SCREENSHOT_DIR = path.join(__dirname, 'screenshots');
-    if (!fs.existsSync(SCREENSHOT_DIR)) fs.mkdirSync(SCREENSHOT_DIR, { recursive: true });
-}
-
 const TG_BOT_TOKEN = process.env.TG_BOT_TOKEN;
 const TG_CHAT_ID = process.env.TG_CHAT_ID;
 
@@ -349,11 +342,6 @@ function getUsers() {
                     const errorMsg = page.getByText('Incorrect password or no account');
                     if (await errorMsg.isVisible({ timeout: 3000 })) {
                         console.error(`   >> ❌ 登录失败: 用户 ${i + 1} 账号或密码错误`);
-                        if (DEBUG_SCREENSHOT) {
-                            const ts = Date.now(); const sd = path.join(process.cwd(), 'screenshots');
-                            if (!fs.existsSync(sd)) fs.mkdirSync(sd, { recursive: true });
-                            try { await page.screenshot({ path: path.join(sd, `${ts}_login_fail.png`), fullPage: true }); } catch (e) { }
-                        }
                         await sendTelegramMessage(`❌ *登录失败*\n用户: ${i + 1}\n原因: 账号或密码错误`);
                         continue;
                     }
@@ -420,12 +408,6 @@ function getUsers() {
                     const confirmBtn = modal.getByRole('button', { name: 'Renew' });
                     if (await confirmBtn.isVisible()) {
 
-                        if (DEBUG_SCREENSHOT) {
-                            const ts = Date.now(); const sd = path.join(process.cwd(), 'screenshots');
-                            if (!fs.existsSync(sd)) fs.mkdirSync(sd, { recursive: true });
-                            try { await page.screenshot({ path: path.join(sd, `${ts}_turnstile_${attempt}.png`), fullPage: true }); } catch (e) { }
-                        }
-
                         // User Request: 找不到的话这个循环直接下一步点击renew，然后检测有没有Please complete the captcha to continue
                         console.log('   >> 点击 Renew 确认按钮 (无论 Turnstile 状态如何)...');
                         await confirmBtn.click();
@@ -460,12 +442,6 @@ function getUsers() {
                                         saveRenewalState(nextDate.toISOString());
                                     }
 
-                                    if (DEBUG_SCREENSHOT) {
-                                        const ts = Date.now(); const sd = path.join(process.cwd(), 'screenshots');
-                                        if (!fs.existsSync(sd)) fs.mkdirSync(sd, { recursive: true });
-                                        try { await page.screenshot({ path: path.join(sd, `${ts}_skip.png`), fullPage: true }); } catch (e) { }
-                                    }
-
                                     await sendTelegramMessage(`⏳ *暂无法续期 (跳过)*\n用户: ${i + 1}\n原因: 还没到时间\n下次可用: ${dateStr}`);
 
                                     renewSuccess = true; // Mark as done to stop retries
@@ -492,12 +468,6 @@ function getUsers() {
                         await page.waitForTimeout(2000);
                         if (!await modal.isVisible()) {
                             console.log('   >> ✅ Modal closed. Renew successful!');
-
-                            if (DEBUG_SCREENSHOT) {
-                                const ts = Date.now(); const sd = path.join(process.cwd(), 'screenshots');
-                                if (!fs.existsSync(sd)) fs.mkdirSync(sd, { recursive: true });
-                                try { await page.screenshot({ path: path.join(sd, `${ts}_success.png`), fullPage: true }); } catch (e) { }
-                            }
 
                             await sendTelegramMessage(`✅ *续期成功*\n用户: ${i + 1}\n状态: 服务器已成功续期！`);
                             // 续期成功: 4 天后再检查
