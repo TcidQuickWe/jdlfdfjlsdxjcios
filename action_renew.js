@@ -25,8 +25,6 @@ async function sendTelegramMessage(message) {
     }
 }
 
-}
-
 // 启用 stealth 插件
 chromium.use(stealth);
 
