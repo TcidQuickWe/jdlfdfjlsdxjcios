@@ -269,7 +269,7 @@ function getUsers() {
 
     for (let i = 0; i < users.length; i++) {
         const user = users[i];
-        console.log(`\n=== Processing User ${i + 1}/${users.length}: ${user.username} ===`);
+        console.log(`\n=== Processing User ${i + 1}/${users.length} ===`);
 
         try {
             if (page.isClosed()) {
@@ -327,14 +327,7 @@ function getUsers() {
                 try {
                     const errorMsg = page.getByText('Incorrect password or no account');
                     if (await errorMsg.isVisible({ timeout: 3000 })) {
-                        console.error(`   >> ❌ Login failed: Incorrect password or no account for user ${user.username}`);
-
-                        // Screenshot for login failure
-                        const photoDir = path.join(__dirname, 'photo');
-                        if (!fs.existsSync(photoDir)) fs.mkdirSync(photoDir, { recursive: true });
-                        try { await page.screenshot({ path: path.join(photoDir, `${user.username}.png`), fullPage: true }); } catch (e) { }
-
-                        // Skip to next user
+                        console.error(`   >> ❌ Login failed: incorrect password for user ${i + 1}`);
                         continue;
                     }
                 } catch (e) { }
@@ -352,7 +345,7 @@ function getUsers() {
             } catch (e) {
                 console.log('Could not find "See" button. Checking if already on detail page or login failed.');
                 if (page.url().includes('login')) {
-                    console.error('Login failed for user ' + user.username);
+                    console.error(`Login failed for user ${i + 1}`);
                     continue;
                 }
             }
@@ -402,17 +395,6 @@ function getUsers() {
                     // D. 准备点击确认
                     const confirmBtn = modal.getByRole('button', { name: 'Renew' });
                     if (await confirmBtn.isVisible()) {
-
-                        // User Requested: Screenshot BEFORE final click (Regardless of CDP status)
-                        const photoDir = path.join(__dirname, 'photo');
-                        if (!fs.existsSync(photoDir)) fs.mkdirSync(photoDir, { recursive: true });
-                        const tsScreenshotName = `${user.username}_Turnstile_${attempt}.png`;
-                        try {
-                            await page.screenshot({ path: path.join(photoDir, tsScreenshotName), fullPage: true });
-                            console.log(`   >> 📸 Snapshot saved: ${tsScreenshotName}`);
-                        } catch (e) {
-                            console.log('   >> Failed to take Turnstile snapshot:', e.message);
-                        }
 
                         // User Request: 找不到的话这个循环直接下一步点击renew，然后检测有没有Please complete the captcha to continue
                         console.log('   >> Clicking Renew confirm button (regardless of Turnstile status)...');
@@ -510,18 +492,7 @@ function getUsers() {
             console.error(`Error processing user ${user.username}:`, err);
         }
 
-        // Snapshot before handling next user (Normal end of loop)
-        const photoDir = path.join(__dirname, 'photo');
-        if (!fs.existsSync(photoDir)) fs.mkdirSync(photoDir, { recursive: true });
-        const screenshotPath = path.join(photoDir, `${user.username}.png`);
-        try {
-            await page.screenshot({ path: screenshotPath, fullPage: true });
-            console.log(`Saved screenshot to: ${screenshotPath}`);
-        } catch (e) {
-            console.log('Failed to take screenshot:', e.message);
-        }
-
-        console.log(`Finished User ${user.username}\n`);
+        console.log(`Finished User ${i + 1}\n`);
     }
 
     console.log('All users processed.');

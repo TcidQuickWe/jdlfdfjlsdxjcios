@@ -70,7 +70,9 @@ jobs:
       uses: actions/cache@v4
       with:
         path: renewal-state.json
-        key: renewal-state
+        key: renewal-state-${{ github.run_id }}
+        restore-keys: |
+          renewal-state-
 
     - name: Run Renew Script
       env:
@@ -80,9 +82,4 @@ jobs:
         TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
       run: xvfb-run --auto-servernum --server-args="-screen 0 1280x720x24" node action_renew.js
 
-    - name: Upload Screenshots
-      if: always()
-      uses: actions/upload-artifact@v4
-      with:
-        name: screenshots
-        path: screenshots/
+

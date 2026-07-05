@@ -70,7 +70,7 @@ jobs:
             cat /tmp/hy2.log 2>/dev/null || echo "(no log)"
       - restore_cache:
           keys:
-            - renewal-state-cache
+            - renewal-state-cache-
       - run:
           name: Run Renew Script
           command: |
@@ -79,10 +79,6 @@ jobs:
             fi
             xvfb-run --auto-servernum --server-args="-screen 0 1280x720x24" node action_renew.js
       - save_cache:
-          key: renewal-state-cache
+          key: renewal-state-cache-{{ .BuildNum }}
           paths:
             - renewal-state.json
-      - store_artifacts:
-          path: screenshots/
-          destination: screenshots
-          when: always
