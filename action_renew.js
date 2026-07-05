@@ -451,10 +451,15 @@ function getUsers() {
                                 }
 
                                 // B. Not Renew Time Error
-                                const notTimeLoc = page.getByText("You can't renew your server yet");
-                                if (await notTimeLoc.isVisible()) {
+                                let notTimeLoc = page.getByText("You can't renew your server yet");
+                                let notTimeVisible = await notTimeLoc.isVisible();
+                                if (!notTimeVisible) {
+                                    notTimeLoc = page.getByText("暂无法续期");
+                                    notTimeVisible = await notTimeLoc.isVisible();
+                                }
+                                if (notTimeVisible) {
                                     const text = await notTimeLoc.innerText();
-                                    const match = text.match(/as of\s+(.*?)\s+\(/);
+                                    const match = text.match(/(?:as of\s+|:?\s*)(.*?)(?:\s*\(|$)/);
                                     let dateStr = match ? match[1] : 'Unknown Date';
                                     console.log(`   >> ⏳ 暂无法续期。下次可用时间: ${dateStr}`);
 

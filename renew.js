@@ -425,11 +425,17 @@ function getUsers() {
                                 }
 
                                 // B. Not Renew Time Error
-                                // content: "You can't renew your server yet. You will be able to as of 02 February (in 3 day(s))."
-                                const notTimeLoc = page.getByText("You can't renew your server yet");
-                                if (await notTimeLoc.isVisible()) {
+                                // "You can't renew your server yet. You will be able to as of 02 February (in 3 day(s))."
+                                // or "暂无法续期。下次可用时间: 06 July"
+                                let notTimeLoc = page.getByText("You can't renew your server yet");
+                                let notTimeVisible = await notTimeLoc.isVisible();
+                                if (!notTimeVisible) {
+                                    notTimeLoc = page.getByText("暂无法续期");
+                                    notTimeVisible = await notTimeLoc.isVisible();
+                                }
+                                if (notTimeVisible) {
                                     const text = await notTimeLoc.innerText();
-                                    const match = text.match(/as of\s+(.*?)\s+\(/);
+                                    const match = text.match(/(?:as of\s+|:?\s*)(.*?)(?:\s*\(|$)/);
                                     let dateStr = match ? match[1] : 'Unknown Date';
                                     console.log(`   >> ⏳ Cannot renew yet. Next renewal available as of: ${dateStr}`);
 
