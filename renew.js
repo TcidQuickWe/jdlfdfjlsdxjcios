@@ -7,6 +7,10 @@ const axios = require('axios');
 const http = require('http');
 const { INJECTED_SCRIPT, bypassTurnstile } = require('./turnstile/turnstile');
 
+// Ensure screenshot directory exists
+const SCREENSHOT_DIR = path.join(__dirname, 'screenshots');
+if (!fs.existsSync(SCREENSHOT_DIR)) fs.mkdirSync(SCREENSHOT_DIR, { recursive: true });
+
 // 启用 stealth 插件
 chromium.use(stealth);
 

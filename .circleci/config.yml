@@ -82,6 +82,10 @@ jobs:
           key: renewal-state-cache-{{ .BuildNum }}
           paths:
             - renewal-state.json
+      - run:
+          name: Ensure screenshots directory
+          command: mkdir -p screenshots
+          when: always
       - store_artifacts:
           path: screenshots/
           destination: screenshots

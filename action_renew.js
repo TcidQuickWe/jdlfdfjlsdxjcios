@@ -7,6 +7,10 @@ const { spawn } = require('child_process');
 const http = require('http');
 const { INJECTED_SCRIPT, bypassTurnstile } = require('./turnstile/turnstile');
 
+// 确保截图目录存在
+const SCREENSHOT_DIR = path.join(__dirname, 'screenshots');
+if (!fs.existsSync(SCREENSHOT_DIR)) fs.mkdirSync(SCREENSHOT_DIR, { recursive: true });
+
 const TG_BOT_TOKEN = process.env.TG_BOT_TOKEN;
 const TG_CHAT_ID = process.env.TG_CHAT_ID;
 
