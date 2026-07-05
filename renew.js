@@ -203,10 +203,12 @@ function getUsers() {
 
     // 检查续期缓存
     const state = loadRenewalState();
+    let staleCache = false;
     if (state && state.skipUntil) {
         const skipDate = new Date(state.skipUntil);
         if (skipDate.getFullYear() < 2024) {
             console.log(`[Cache] skipUntil(${state.skipUntil}) year is abnormal, ignoring stale cache.`);
+            staleCache = true;
         } else if (skipDate > new Date()) {
             console.log(`[Cache] Next available from last check: ${state.skipUntil}, skipping this run.`);
             process.exit(0);
@@ -214,11 +216,14 @@ function getUsers() {
     }
 
     // 随机延迟 0-30 分钟, 避免固定时间模式
-    const randomDelayMs = Math.floor(Math.random() * 1800000);
-    const delayMin = Math.round(randomDelayMs / 60000);
-    if (delayMin > 0) {
-        console.log(`[Delay] Random wait ${delayMin} min...`);
-        await new Promise(r => setTimeout(r, randomDelayMs));
+    // Skip delay when ignoring stale cache
+    if (!staleCache) {
+        const randomDelayMs = Math.floor(Math.random() * 1800000);
+        const delayMin = Math.round(randomDelayMs / 60000);
+        if (delayMin > 0) {
+            console.log(`[Delay] Random wait ${delayMin} min...`);
+            await new Promise(r => setTimeout(r, randomDelayMs));
+        }
     }
 
     await launchNativeChrome();

@@ -239,10 +239,12 @@ function getUsers() {
 
     // 检查续期缓存: 如果还没到可用时间, 直接跳过
     const state = loadRenewalState();
+    let staleCache = false;
     if (state && state.skipUntil) {
         const skipDate = new Date(state.skipUntil);
         if (skipDate.getFullYear() < 2024) {
             console.log(`[缓存] skipUntil(${state.skipUntil}) 年份异常, 忽略旧缓存。`);
+            staleCache = true;
         } else if (skipDate > new Date()) {
             console.log(`[缓存] 上次检查显示下次可用时间: ${state.skipUntil}, 跳过本次运行。`);
             process.exit(0);
@@ -250,11 +252,14 @@ function getUsers() {
     }
 
     // 随机延迟 0-30 分钟, 避免固定时间模式被检测
-    const randomDelayMs = Math.floor(Math.random() * 1800000);
-    const delayMin = Math.round(randomDelayMs / 60000);
-    if (delayMin > 0) {
-        console.log(`[延迟] 随机等待 ${delayMin} 分钟...`);
-        await new Promise(r => setTimeout(r, randomDelayMs));
+    // 忽略旧缓存时直接运行, 不延迟
+    if (!staleCache) {
+        const randomDelayMs = Math.floor(Math.random() * 1800000);
+        const delayMin = Math.round(randomDelayMs / 60000);
+        if (delayMin > 0) {
+            console.log(`[延迟] 随机等待 ${delayMin} 分钟...`);
+            await new Promise(r => setTimeout(r, randomDelayMs));
+        }
     }
 
     await launchChrome();
