@@ -216,10 +216,13 @@ function getUsers() {
         const skipDate = new Date(state.skipUntil);
         if (skipDate.getFullYear() < 2024) {
             console.log(`[Cache] skipUntil(${state.skipUntil}) year is abnormal, ignoring stale cache.`);
-        } else if (skipDate > new Date()) {
-            console.log(`[Cache] Next available from last check: ${state.skipUntil}, skipping this run.`);
-            process.exit(0);
         } else {
+            const skipDay = new Date(Date.UTC(skipDate.getUTCFullYear(), skipDate.getUTCMonth(), skipDate.getUTCDate()));
+            const todayDay = new Date(Date.UTC(new Date().getUTCFullYear(), new Date().getUTCMonth(), new Date().getUTCDate()));
+            if (skipDay > todayDay) {
+                console.log(`[Cache] Next available from last check: ${state.skipUntil}, skipping this run.`);
+                process.exit(0);
+            }
             staleCache = false;
         }
     }
