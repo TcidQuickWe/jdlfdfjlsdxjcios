@@ -217,10 +217,10 @@ function getUsers() {
         }
     }
 
-    // 随机延迟 0-30 分钟, 避免固定时间模式
+    // 随机延迟 0-9 分钟, 避免固定时间模式
     // Skip delay when ignoring stale cache
     if (!staleCache) {
-        const randomDelayMs = Math.floor(Math.random() * 1800000);
+        const randomDelayMs = Math.floor(Math.random() * 540000);
         const delayMin = Math.round(randomDelayMs / 60000);
         if (delayMin > 0) {
             console.log(`[Delay] Random wait ${delayMin} min...`);

@@ -235,10 +235,10 @@ function getUsers() {
         }
     }
 
-    // 随机延迟 0-30 分钟, 避免固定时间模式被检测
+    // 随机延迟 0-9 分钟, 避免固定时间模式被检测
     // 忽略旧缓存时直接运行, 不延迟
     if (!staleCache) {
-        const randomDelayMs = Math.floor(Math.random() * 1800000);
+        const randomDelayMs = Math.floor(Math.random() * 540000);
         const delayMin = Math.round(randomDelayMs / 60000);
         if (delayMin > 0) {
             console.log(`[延迟] 随机等待 ${delayMin} 分钟...`);
