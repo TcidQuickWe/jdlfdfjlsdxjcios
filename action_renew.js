@@ -126,10 +126,17 @@ function saveRenewalState(skipUntilISO) {
 
 function parseNextDate(dateStr) {
     let d = new Date(dateStr);
-    if (!isNaN(d.getTime()) && d.getFullYear() >= 2024) return d;
+    if (!isNaN(d.getTime()) && d.getFullYear() >= 2024) {
+        return new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()));
+    }
     d = new Date(dateStr + ' ' + new Date().getFullYear());
-    if (!isNaN(d.getTime())) return d;
-    return new Date(Date.now() + 24 * 60 * 60 * 1000);
+    if (!isNaN(d.getTime())) {
+        return new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()));
+    }
+    const fallback = new Date();
+    fallback.setUTCDate(fallback.getUTCDate() + 1);
+    fallback.setUTCHours(0, 0, 0, 0);
+    return fallback;
 }
 
 function checkPort(port) {
@@ -471,7 +478,9 @@ function getUsers() {
 
                             await sendTelegramMessage(`✅ *续期成功*\n用户: ${i + 1}\n状态: 服务器已成功续期！`);
                             // 续期成功: 4 天后再检查
-                            const nextRenew = new Date(Date.now() + 4 * 24 * 60 * 60 * 1000);
+                            const nextRenew = new Date();
+                            nextRenew.setUTCDate(nextRenew.getUTCDate() + 4);
+                            nextRenew.setUTCHours(0, 0, 0, 0);
                             saveRenewalState(nextRenew.toISOString());
                             renewSuccess = true;
                             break;
