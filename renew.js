@@ -344,6 +344,16 @@ function getUsers() {
                     }
                 } catch (e) { }
 
+                // Wait for login redirect
+                console.log('   >> Waiting for login redirect...');
+                try {
+                    await page.waitForURL(url => !url.toString().includes('/auth/login'), { timeout: 20000 });
+                    console.log(`   >> Redirected to: ${page.url()}`);
+                } catch (e) {
+                    console.log(`   >> Login redirect timeout, URL: ${page.url()}`);
+                }
+                await page.waitForTimeout(2000);
+
             } catch (e) {
                 // 可能已经登录了，或者是其他 UI 状态
                 console.log('Login form interaction error (maybe already logged in?):', e.message);
@@ -353,23 +363,29 @@ function getUsers() {
             let seeFound = false;
             for (let seeAttempt = 1; seeAttempt <= 3; seeAttempt++) {
                 try {
-                    await page.getByRole('link', { name: 'See' }).first().waitFor({ timeout: 10000 });
+                    const seeLoc = page.locator('a, button, [role="link"], [role="button"]').filter({ hasText: /^See$/i }).first();
+                    await seeLoc.waitFor({ state: 'visible', timeout: 15000 });
                     await page.waitForTimeout(1000);
-                    await page.getByRole('link', { name: 'See' }).first().click();
+                    await seeLoc.click();
                     seeFound = true;
+                    console.log(`   >> "See" clicked (attempt ${seeAttempt}/3)`);
                     break;
                 } catch (e) {
-                    console.log(`Could not find "See" button (attempt ${seeAttempt}/3).`);
+                    console.log(`Could not find "See" button (attempt ${seeAttempt}/3), URL=${page.url()}`);
                     if (seeAttempt < 3) {
                         await page.waitForTimeout(3000);
-                        try { await page.reload(); await page.waitForTimeout(2000); } catch (re) { }
+                        if (page.url().includes('/auth/login')) {
+                            console.log('   >> Still on login page, waiting...');
+                        } else {
+                            try { await page.reload({ waitUntil: 'domcontentloaded' }); await page.waitForTimeout(3000); } catch (re) { }
+                        }
                     } else if (page.url().includes('login')) {
                         console.error(`Login failed for user ${i + 1}`);
                     }
                 }
             }
             if (!seeFound) {
-                console.log('Failed to find "See" button after 3 attempts, skipping user.');
+                console.log(`Failed to find "See" button after 3 attempts, skipping user. URL=${page.url()}`);
                 continue;
             }
 

@@ -357,6 +357,16 @@ function getUsers() {
                     }
                 } catch (e) { }
 
+                // 等待登录完成: 离开 login 页或出现 dashboard 内容
+                console.log('   >> 等待登录跳转...');
+                try {
+                    await page.waitForURL(url => !url.toString().includes('/auth/login'), { timeout: 20000 });
+                    console.log(`   >> 已跳转: ${page.url()}`);
+                } catch (e) {
+                    console.log(`   >> 登录跳转超时, 当前 URL: ${page.url()}`);
+                }
+                await page.waitForTimeout(2000);
+
             } catch (e) {
                 console.log('登录错误:', e.message);
             }
@@ -365,21 +375,29 @@ function getUsers() {
             let seeFound = false;
             for (let seeAttempt = 1; seeAttempt <= 3; seeAttempt++) {
                 try {
-                    await page.getByRole('link', { name: 'See' }).first().waitFor({ timeout: 10000 });
+                    // 兼容 link / button / 纯文本
+                    const seeLoc = page.locator('a, button, [role="link"], [role="button"]').filter({ hasText: /^See$/i }).first();
+                    await seeLoc.waitFor({ state: 'visible', timeout: 15000 });
                     await page.waitForTimeout(1000);
-                    await page.getByRole('link', { name: 'See' }).first().click();
+                    await seeLoc.click();
                     seeFound = true;
+                    console.log(`   >> "See" 已点击 (尝试 ${seeAttempt}/3)`);
                     break;
                 } catch (e) {
-                    console.log(`未找到 "See" 按钮 (尝试 ${seeAttempt}/3)。`);
+                    console.log(`未找到 "See" 按钮 (尝试 ${seeAttempt}/3), URL=${page.url()}`);
                     if (seeAttempt < 3) {
                         await page.waitForTimeout(3000);
-                        try { await page.reload(); await page.waitForTimeout(2000); } catch (re) { }
+                        // 若仍在登录页, 不 reload(无用), 直接等; 已在 dashboard 则刷新
+                        if (page.url().includes('/auth/login')) {
+                            console.log('   >> 仍在登录页, 等待后重试...');
+                        } else {
+                            try { await page.reload({ waitUntil: 'domcontentloaded' }); await page.waitForTimeout(3000); } catch (re) { }
+                        }
                     }
                 }
             }
             if (!seeFound) {
-                console.log('三次均未找到 "See" 按钮，跳过该用户。');
+                console.log(`三次均未找到 "See" 按钮，跳过该用户。URL=${page.url()}`);
                 continue;
             }
 
