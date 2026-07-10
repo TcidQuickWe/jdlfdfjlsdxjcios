@@ -362,12 +362,24 @@ function getUsers() {
             }
 
             console.log('正在寻找 "See" 链接...');
-            try {
-                await page.getByRole('link', { name: 'See' }).first().waitFor({ timeout: 15000 });
-                await page.waitForTimeout(1000);
-                await page.getByRole('link', { name: 'See' }).first().click();
-            } catch (e) {
-                console.log('未找到 "See" 按钮。');
+            let seeFound = false;
+            for (let seeAttempt = 1; seeAttempt <= 3; seeAttempt++) {
+                try {
+                    await page.getByRole('link', { name: 'See' }).first().waitFor({ timeout: 10000 });
+                    await page.waitForTimeout(1000);
+                    await page.getByRole('link', { name: 'See' }).first().click();
+                    seeFound = true;
+                    break;
+                } catch (e) {
+                    console.log(`未找到 "See" 按钮 (尝试 ${seeAttempt}/3)。`);
+                    if (seeAttempt < 3) {
+                        await page.waitForTimeout(3000);
+                        try { await page.reload(); await page.waitForTimeout(2000); } catch (re) { }
+                    }
+                }
+            }
+            if (!seeFound) {
+                console.log('三次均未找到 "See" 按钮，跳过该用户。');
                 continue;
             }
 

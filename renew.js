@@ -350,16 +350,27 @@ function getUsers() {
             }
 
             console.log('Waiting for "See" link...');
-            try {
-                await page.getByRole('link', { name: 'See' }).first().waitFor({ timeout: 15000 });
-                await page.waitForTimeout(1000);
-                await page.getByRole('link', { name: 'See' }).first().click();
-            } catch (e) {
-                console.log('Could not find "See" button. Checking if already on detail page or login failed.');
-                if (page.url().includes('login')) {
-                    console.error(`Login failed for user ${i + 1}`);
-                    continue;
+            let seeFound = false;
+            for (let seeAttempt = 1; seeAttempt <= 3; seeAttempt++) {
+                try {
+                    await page.getByRole('link', { name: 'See' }).first().waitFor({ timeout: 10000 });
+                    await page.waitForTimeout(1000);
+                    await page.getByRole('link', { name: 'See' }).first().click();
+                    seeFound = true;
+                    break;
+                } catch (e) {
+                    console.log(`Could not find "See" button (attempt ${seeAttempt}/3).`);
+                    if (seeAttempt < 3) {
+                        await page.waitForTimeout(3000);
+                        try { await page.reload(); await page.waitForTimeout(2000); } catch (re) { }
+                    } else if (page.url().includes('login')) {
+                        console.error(`Login failed for user ${i + 1}`);
+                    }
                 }
+            }
+            if (!seeFound) {
+                console.log('Failed to find "See" button after 3 attempts, skipping user.');
+                continue;
             }
 
             let renewSuccess = false;
