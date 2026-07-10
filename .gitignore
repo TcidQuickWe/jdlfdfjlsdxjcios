@@ -1,5 +1,6 @@
 node_modules/
 login.json
+ChromeData/
 ChromeData_Katabump/
 .env
 *.log
