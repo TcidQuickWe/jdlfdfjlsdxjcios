@@ -357,42 +357,90 @@ function getUsers() {
                     }
                 } catch (e) { }
 
-                // 等待登录完成: 离开 login 页或出现 dashboard 内容
+                // 等待登录完成: 离开 login 页
                 console.log('   >> 等待登录跳转...');
                 try {
-                    await page.waitForURL(url => !url.toString().includes('/auth/login'), { timeout: 20000 });
+                    await page.waitForURL(url => !String(url).includes('/auth/login'), { timeout: 30000 });
                     console.log(`   >> 已跳转: ${page.url()}`);
                 } catch (e) {
                     console.log(`   >> 登录跳转超时, 当前 URL: ${page.url()}`);
                 }
-                await page.waitForTimeout(2000);
+                await page.waitForLoadState('domcontentloaded').catch(() => {});
+                await page.waitForTimeout(3000);
 
             } catch (e) {
                 console.log('登录错误:', e.message);
             }
 
-            console.log('正在寻找 "See" 链接...');
+            // 登录后强制进入 dashboard 主页，避免停在中间页
+            if (page.url().includes('/auth/login')) {
+                console.error(`   >> ❌ 仍在登录页，登录可能失败。title=${await page.title().catch(() => '')}`);
+                try {
+                    const bodyText = await page.locator('body').innerText({ timeout: 3000 });
+                    console.log('   >> 页面摘要:', bodyText.replace(/\s+/g, ' ').slice(0, 300));
+                } catch (e) { }
+                continue;
+            }
+            if (!page.url().includes('dashboard.katabump.com')) {
+                console.log('   >> 导航到 dashboard...');
+                await page.goto('https://dashboard.katabump.com/', { waitUntil: 'domcontentloaded' });
+                await page.waitForTimeout(2000);
+            }
+
+            console.log(`正在寻找 "See" 链接... URL=${page.url()}`);
             let seeFound = false;
             for (let seeAttempt = 1; seeAttempt <= 3; seeAttempt++) {
                 try {
-                    // 兼容 link / button / 纯文本
-                    const seeLoc = page.locator('a, button, [role="link"], [role="button"]').filter({ hasText: /^See$/i }).first();
-                    await seeLoc.waitFor({ state: 'visible', timeout: 15000 });
-                    await page.waitForTimeout(1000);
+                    // 多种文案 / 角色兼容 (EN/中文, link/button/任意可点元素)
+                    const seeCandidates = [
+                        page.getByRole('link', { name: /^See$/i }),
+                        page.getByRole('button', { name: /^See$/i }),
+                        page.getByRole('link', { name: /查看|View|Manage|Details/i }),
+                        page.getByRole('button', { name: /查看|View|Manage|Details/i }),
+                        page.locator('a, button, [role="link"], [role="button"]').filter({ hasText: /^(See|查看|View|Manage)$/i }),
+                        page.locator('a[href*="server"], a[href*="manage"], a[href*="detail"]'),
+                    ];
+                    let seeLoc = null;
+                    for (const cand of seeCandidates) {
+                        try {
+                            const first = cand.first();
+                            if (await first.isVisible({ timeout: 1500 }).catch(() => false)) {
+                                seeLoc = first;
+                                break;
+                            }
+                        } catch (e) { }
+                    }
+                    if (!seeLoc) {
+                        // 最后兜底: 任意包含 See 的可见链接
+                        seeLoc = page.locator('a:visible, button:visible').filter({ hasText: /See|查看/i }).first();
+                        await seeLoc.waitFor({ state: 'visible', timeout: 8000 });
+                    }
+                    await page.waitForTimeout(500);
                     await seeLoc.click();
                     seeFound = true;
                     console.log(`   >> "See" 已点击 (尝试 ${seeAttempt}/3)`);
                     break;
                 } catch (e) {
-                    console.log(`未找到 "See" 按钮 (尝试 ${seeAttempt}/3), URL=${page.url()}`);
+                    console.log(`未找到 "See" 按钮 (尝试 ${seeAttempt}/3), URL=${page.url()}, err=${e.message}`);
+                    // 打印页面上所有可见链接文本，便于排查
+                    try {
+                        const links = await page.locator('a:visible, button:visible').evaluateAll(els =>
+                            els.slice(0, 40).map(el => (el.innerText || el.textContent || '').trim().replace(/\s+/g, ' ').slice(0, 40)).filter(Boolean)
+                        );
+                        console.log('   >> 可见链接/按钮:', JSON.stringify(links));
+                    } catch (de) {
+                        console.log('   >> 无法列出页面元素:', de.message);
+                    }
                     if (seeAttempt < 3) {
                         await page.waitForTimeout(3000);
-                        // 若仍在登录页, 不 reload(无用), 直接等; 已在 dashboard 则刷新
                         if (page.url().includes('/auth/login')) {
-                            console.log('   >> 仍在登录页, 等待后重试...');
-                        } else {
-                            try { await page.reload({ waitUntil: 'domcontentloaded' }); await page.waitForTimeout(3000); } catch (re) { }
+                            console.log('   >> 仍在登录页, 放弃 See 重试');
+                            break;
                         }
+                        try {
+                            await page.goto('https://dashboard.katabump.com/', { waitUntil: 'domcontentloaded' });
+                            await page.waitForTimeout(3000);
+                        } catch (re) { }
                     }
                 }
             }
