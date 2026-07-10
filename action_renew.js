@@ -320,68 +320,108 @@ function getUsers() {
             }
 
             console.log('正在输入凭据...');
-            try {
-                const emailInput = page.getByRole('textbox', { name: 'Email' });
-                await emailInput.waitFor({ state: 'visible', timeout: 5000 });
-                await emailInput.fill(user.username);
-                const pwdInput = page.getByRole('textbox', { name: 'Password' });
-                await pwdInput.fill(user.password);
-                await page.waitForTimeout(500);
+            let loginOk = false;
+            for (let loginAttempt = 1; loginAttempt <= 3; loginAttempt++) {
+                try {
+                    if (!page.url().includes('/auth/login')) {
+                        await page.goto('https://dashboard.katabump.com/auth/login', { waitUntil: 'domcontentloaded' });
+                        await page.waitForTimeout(2000);
+                    }
 
-                // --- Cloudflare Turnstile Bypass for Login ---
-                console.log('   >> 正在登录前检查 Turnstile (使用 CDP 绕过)...');
-                const loginTurnstile = await bypassTurnstile(page, {
-                    findAttempts: 15,
-                    successTimeoutMs: 10000,
-                    label: 'Login'
-                });
-                if (loginTurnstile.clicked) {
-                    console.log('   >> Turnstile 已点击。');
+                    const emailInput = page.getByRole('textbox', { name: 'Email' });
+                    await emailInput.waitFor({ state: 'visible', timeout: 8000 });
+                    await emailInput.fill('');
+                    await emailInput.fill(user.username);
+                    const pwdInput = page.getByRole('textbox', { name: 'Password' });
+                    await pwdInput.fill('');
+                    await pwdInput.fill(user.password);
+                    await page.waitForTimeout(500);
+
+                    // --- Cloudflare Turnstile Bypass for Login ---
+                    console.log(`   >> 登录尝试 ${loginAttempt}/3: 检查 Turnstile...`);
+                    const loginTurnstile = await bypassTurnstile(page, {
+                        findAttempts: 20,
+                        successTimeoutMs: 18000,
+                        waitForSuccess: true,
+                        label: 'Login'
+                    });
+                    if (loginTurnstile.clicked) {
+                        console.log('   >> Turnstile 已点击。');
+                    }
                     if (loginTurnstile.success) {
                         console.log('   >> 登录前 Turnstile 验证成功。');
-                    }
-                } else {
-                    console.log('   >> 登录前未检测到或未点击 Turnstile，继续操作...');
-                }
-                // --------------------------------------------
-
-                await page.getByRole('button', { name: 'Login', exact: true }).click();
-
-                // User Request: Check for incorrect password
-                try {
-                    const errorMsg = page.getByText('Incorrect password or no account');
-                    if (await errorMsg.isVisible({ timeout: 3000 })) {
-                        console.error(`   >> ❌ 登录失败: 用户 ${i + 1} 账号或密码错误`);
-                        await sendTelegramMessage(`❌ *登录失败*\n用户: ${i + 1}\n原因: 账号或密码错误`);
+                    } else {
+                        console.log(`   >> Turnstile 未通过 (尝试 ${loginAttempt}/3)，刷新后重试...`);
+                        await page.goto('https://dashboard.katabump.com/auth/login', { waitUntil: 'domcontentloaded' });
+                        await page.waitForTimeout(3000);
                         continue;
                     }
-                } catch (e) { }
 
-                // 等待登录完成: 离开 login 页
-                console.log('   >> 等待登录跳转...');
-                try {
-                    await page.waitForURL(url => !String(url).includes('/auth/login'), { timeout: 30000 });
-                    console.log(`   >> 已跳转: ${page.url()}`);
+                    await page.getByRole('button', { name: 'Login', exact: true }).click();
+
+                    // wrong password
+                    try {
+                        const errorMsg = page.getByText('Incorrect password or no account');
+                        if (await errorMsg.isVisible({ timeout: 2500 })) {
+                            console.error(`   >> ❌ 登录失败: 用户 ${i + 1} 账号或密码错误`);
+                            await sendTelegramMessage(`❌ *登录失败*\n用户: ${i + 1}\n原因: 账号或密码错误`);
+                            loginOk = false;
+                            break;
+                        }
+                    } catch (e) { }
+
+                    // captcha error toast / text
+                    try {
+                        const captchaErr = page.getByText(/Please complete captcha|complete captcha/i);
+                        if (await captchaErr.isVisible({ timeout: 2000 })) {
+                            console.log('   >> 检测到 captcha 错误提示');
+                        }
+                    } catch (e) { }
+
+                    console.log('   >> 等待登录跳转...');
+                    try {
+                        await page.waitForURL(url => !String(url).includes('/auth/login'), { timeout: 25000 });
+                        console.log(`   >> 已跳转: ${page.url()}`);
+                        loginOk = true;
+                        break;
+                    } catch (e) {
+                        const cur = page.url();
+                        console.log(`   >> 登录跳转超时, 当前 URL: ${cur}`);
+                        if (cur.includes('error=captcha') || cur.includes('captcha')) {
+                            console.log(`   >> captcha 失败 (尝试 ${loginAttempt}/3)，刷新重试...`);
+                            await page.goto('https://dashboard.katabump.com/auth/login', { waitUntil: 'domcontentloaded' });
+                            await page.waitForTimeout(3000);
+                            continue;
+                        }
+                        if (cur.includes('/auth/login')) {
+                            await page.waitForTimeout(2000);
+                            continue;
+                        }
+                    }
                 } catch (e) {
-                    console.log(`   >> 登录跳转超时, 当前 URL: ${page.url()}`);
+                    console.log(`登录错误 (尝试 ${loginAttempt}/3):`, e.message);
+                    try {
+                        await page.goto('https://dashboard.katabump.com/auth/login', { waitUntil: 'domcontentloaded' });
+                        await page.waitForTimeout(2000);
+                    } catch (re) { }
                 }
-                await page.waitForLoadState('domcontentloaded').catch(() => {});
-                await page.waitForTimeout(3000);
-
-            } catch (e) {
-                console.log('登录错误:', e.message);
             }
 
-            // 登录后强制进入 dashboard 主页，避免停在中间页
-            if (page.url().includes('/auth/login')) {
-                console.error(`   >> ❌ 仍在登录页，登录可能失败。title=${await page.title().catch(() => '')}`);
+            if (!loginOk || page.url().includes('/auth/login')) {
+                console.error(`   >> ❌ 登录失败，仍在登录页。title=${await page.title().catch(() => '')}`);
                 try {
                     const bodyText = await page.locator('body').innerText({ timeout: 3000 });
                     console.log('   >> 页面摘要:', bodyText.replace(/\s+/g, ' ').slice(0, 300));
                 } catch (e) { }
+                await sendTelegramMessage(`❌ *登录失败*\n用户: ${i + 1}\n原因: captcha/跳转失败`);
                 continue;
             }
-            if (!page.url().includes('dashboard.katabump.com')) {
+
+            await page.waitForLoadState('domcontentloaded').catch(() => {});
+            await page.waitForTimeout(2000);
+
+            // 确保在 dashboard
+            if (!page.url().includes('dashboard.katabump.com') || page.url().includes('/auth/')) {
                 console.log('   >> 导航到 dashboard...');
                 await page.goto('https://dashboard.katabump.com/', { waitUntil: 'domcontentloaded' });
                 await page.waitForTimeout(2000);
@@ -391,7 +431,6 @@ function getUsers() {
             let seeFound = false;
             for (let seeAttempt = 1; seeAttempt <= 3; seeAttempt++) {
                 try {
-                    // 多种文案 / 角色兼容 (EN/中文, link/button/任意可点元素)
                     const seeCandidates = [
                         page.getByRole('link', { name: /^See$/i }),
                         page.getByRole('button', { name: /^See$/i }),
@@ -411,7 +450,6 @@ function getUsers() {
                         } catch (e) { }
                     }
                     if (!seeLoc) {
-                        // 最后兜底: 任意包含 See 的可见链接
                         seeLoc = page.locator('a:visible, button:visible').filter({ hasText: /See|查看/i }).first();
                         await seeLoc.waitFor({ state: 'visible', timeout: 8000 });
                     }
@@ -422,7 +460,6 @@ function getUsers() {
                     break;
                 } catch (e) {
                     console.log(`未找到 "See" 按钮 (尝试 ${seeAttempt}/3), URL=${page.url()}, err=${e.message}`);
-                    // 打印页面上所有可见链接文本，便于排查
                     try {
                         const links = await page.locator('a:visible, button:visible').evaluateAll(els =>
                             els.slice(0, 40).map(el => (el.innerText || el.textContent || '').trim().replace(/\s+/g, ' ').slice(0, 40)).filter(Boolean)

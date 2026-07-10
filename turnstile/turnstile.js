@@ -105,22 +105,71 @@ async function attemptTurnstileCdp(page) {
 }
 
 /**
- * Check if "Success!" text is visible in any Cloudflare iframe.
+ * Check if captcha verification succeeded.
+ * Looks for: Success! text, cf-turnstile-response token, altcha state.
  *
  * @param {import('playwright').Page} page
  * @returns {Promise<boolean>}
  */
 async function checkTurnstileSuccess(page) {
+    // 1) Token fields on main page
+    try {
+        const hasToken = await page.evaluate(() => {
+            const sels = [
+                'input[name="cf-turnstile-response"]',
+                'textarea[name="cf-turnstile-response"]',
+                'input[name="g-recaptcha-response"]',
+                'input[name="h-captcha-response"]',
+                '[name="altcha"]',
+                'input[name="altcha"]',
+            ];
+            for (const s of sels) {
+                const el = document.querySelector(s);
+                if (el && el.value && String(el.value).length > 20) return true;
+            }
+            const w = document.querySelector('[data-turnstile-response], .cf-turnstile[data-response]');
+            if (w) {
+                const v = w.getAttribute('data-turnstile-response') || w.getAttribute('data-response') || '';
+                if (v.length > 20) return true;
+            }
+            return false;
+        });
+        if (hasToken) return true;
+    } catch (e) { }
+
+    // 2) Success text in cloudflare iframes
     const frames = page.frames();
     for (const f of frames) {
-        if (f.url().includes('cloudflare')) {
+        const url = f.url() || '';
+        if (url.includes('cloudflare') || url.includes('challenges.cloudflare') || url.includes('turnstile')) {
             try {
-                if (await f.getByText('Success!', { exact: false }).isVisible({ timeout: 500 })) {
+                if (await f.getByText('Success!', { exact: false }).isVisible({ timeout: 400 })) {
                     return true;
                 }
             } catch (e) { }
+            try {
+                const ok = await f.evaluate(() => {
+                    const t = (document.body && document.body.innerText) || '';
+                    return /success/i.test(t);
+                });
+                if (ok) return true;
+            } catch (e) { }
         }
     }
+
+    // 3) ALTCHA verified state
+    try {
+        const altchaOk = await page.evaluate(() => {
+            const w = document.querySelector('altcha-widget, .altcha');
+            if (!w) return false;
+            if (w.getAttribute('data-state') === 'verified') return true;
+            if (w.classList && w.classList.contains('altcha--verified')) return true;
+            const cb = document.querySelector('.altcha-checkbox input[type="checkbox"]');
+            return !!(cb && cb.checked);
+        });
+        if (altchaOk) return true;
+    } catch (e) { }
+
     return false;
 }
 
@@ -128,6 +177,7 @@ async function checkTurnstileSuccess(page) {
  * High-level captcha bypass flow:
  * 1. Poll for the checkbox up to `findAttempts` times.
  * 2. If found and clicked, optionally wait for verification.
+ * 3. If no success signal, try one more click.
  *
  * @param {import('playwright').Page} page
  * @param {object} [options]
@@ -143,11 +193,17 @@ async function bypassTurnstile(page, options = {}) {
         findAttempts = 15,
         waitAfterClickMs = 8000,
         waitForSuccess = true,
-        successTimeoutMs = 10000,
+        successTimeoutMs = 15000,
         label = ''
     } = options;
 
     const tag = label ? `[${label}] ` : '';
+
+    // Already solved?
+    if (await checkTurnstileSuccess(page)) {
+        console.log(`   >> ${tag}Captcha already verified.`);
+        return { clicked: false, success: true };
+    }
 
     let clicked = false;
     for (let i = 0; i < findAttempts; i++) {
@@ -161,6 +217,10 @@ async function bypassTurnstile(page, options = {}) {
     }
 
     if (!clicked) {
+        if (await checkTurnstileSuccess(page)) {
+            console.log(`   >> ${tag}No click needed, token present.`);
+            return { clicked: false, success: true };
+        }
         console.log(`   >> ${tag}Not found after ${findAttempts} attempts.`);
         return { clicked: false, success: false };
     }
@@ -175,6 +235,28 @@ async function bypassTurnstile(page, options = {}) {
                 break;
             }
             await new Promise(r => setTimeout(r, 1000));
+        }
+        // One more click if still not verified
+        if (!success) {
+            console.log(`   >> ${tag}No signal, retrying captcha click...`);
+            try {
+                for (const frame of page.frames()) {
+                    await frame.evaluate(() => { try { delete window.__turnstile_data; } catch (e) {} }).catch(() => {});
+                }
+            } catch (e) { }
+            await new Promise(r => setTimeout(r, 1500));
+            const reclicked = await attemptTurnstileCdp(page);
+            if (reclicked) {
+                const deadline2 = Date.now() + Math.min(successTimeoutMs, 12000);
+                while (Date.now() < deadline2) {
+                    if (await checkTurnstileSuccess(page)) {
+                        success = true;
+                        console.log(`   >> ${tag}Verification passed after reclick.`);
+                        break;
+                    }
+                    await new Promise(r => setTimeout(r, 1000));
+                }
+            }
         }
         if (!success) {
             console.log(`   >> ${tag}No verification signal within ${successTimeoutMs}ms.`);
