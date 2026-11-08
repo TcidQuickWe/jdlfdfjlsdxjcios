@@ -41,8 +41,24 @@ jobs:
               exit 0
             fi
             # sing-box 支持 VLESS + WS/TCP/GRPC/H2 + TLS/REALITY
-            curl -sL https://github.com/SagerNet/sing-box/releases/latest/download/sing-box-latest-linux-amd64.tar.gz -o sb.tar.gz \
-              || curl -sL "https://github.com/SagerNet/sing-box/releases/download/v1.11.4/sing-box-1.11.4-linux-amd64.tar.gz" -o sb.tar.gz
+            # 注意：release 资源名必须带版本号，没有 "latest" 别名，
+            # 否则 curl -sL 会把 404 页面存成 tar.gz（报 "not in gzip format"）
+            SB_VER=$(curl -sfL --max-time 30 https://api.github.com/repos/SagerNet/sing-box/releases/latest \
+              | grep '"tag_name":' | sed -E 's/.*"v?([^"]+)".*/\1/')
+            SB_VER="${SB_VER:-1.14.4}"
+            echo "sing-box version: $SB_VER"
+            SB_URL="https://github.com/SagerNet/sing-box/releases/download/v${SB_VER}/sing-box-${SB_VER}-linux-amd64.tar.gz"
+            echo "downloading: $SB_URL"
+            if ! curl -fL --retry 3 --max-time 300 -o sb.tar.gz "$SB_URL"; then
+              echo "ERROR: failed to download sing-box from $SB_URL"
+              exit 1
+            fi
+            # 校验确实是 gzip，防止再次把错误页当压缩包
+            if ! gzip -t sb.tar.gz 2>/dev/null; then
+              echo "ERROR: downloaded file is not a valid gzip archive"
+              head -c 200 sb.tar.gz
+              exit 1
+            fi
             tar -xzf sb.tar.gz --strip-components=1 --wildcards '*/sing-box' 2>/dev/null || {
               tar -xzf sb.tar.gz
               find . -name sing-box -type f -exec cp {} ./sing-box \;
