@@ -6,7 +6,8 @@ ChromeData_Katabump/
 *.log
 .DS_Store
 photo/
-hy2-config.json
-hysteria
+vless-config.json
+sing-box
+sb.tar.gz
 screenshots/
 renewal-state.json

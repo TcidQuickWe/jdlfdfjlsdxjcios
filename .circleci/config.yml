@@ -34,47 +34,114 @@ jobs:
             npm install
             npx playwright install-deps chrome
       - run:
-          name: Setup hy2 Proxy
+          name: Setup VLESS Proxy
           command: |
-            if [ -z "$HY2_URL" ]; then
-              echo "HY2_URL not set, skipping proxy"
+            if [ -z "$VLESS_URL" ]; then
+              echo "VLESS_URL not set, skipping proxy"
               exit 0
             fi
-            curl -sL https://github.com/apernet/hysteria/releases/latest/download/hysteria-linux-amd64 -o hysteria
-            chmod +x hysteria
+            # sing-box 支持 VLESS + WS/TCP/GRPC/H2 + TLS/REALITY
+            curl -sL https://github.com/SagerNet/sing-box/releases/latest/download/sing-box-latest-linux-amd64.tar.gz -o sb.tar.gz \
+              || curl -sL "https://github.com/SagerNet/sing-box/releases/download/v1.11.4/sing-box-1.11.4-linux-amd64.tar.gz" -o sb.tar.gz
+            tar -xzf sb.tar.gz --strip-components=1 --wildcards '*/sing-box' 2>/dev/null || {
+              tar -xzf sb.tar.gz
+              find . -name sing-box -type f -exec cp {} ./sing-box \;
+            }
+            chmod +x sing-box
+            rm -f sb.tar.gz
+            ./sing-box version
             node -e "
-            var u = new URL(process.env.HY2_URL);
-            var c = {
-              server: u.hostname + ':' + (u.port || 443),
-              auth: u.username,
-              tls: { sni: u.searchParams.get('sni') || u.hostname },
-              socks5: { listen: '127.0.0.1:1080' }
+            var u = new URL(process.env.VLESS_URL);
+            var p = u.searchParams;
+            var out = {
+              type: 'vless',
+              tag: 'proxy',
+              server: u.hostname,
+              server_port: parseInt(u.port || (p.get('security') === 'tls' || p.get('security') === 'reality' ? '443' : '80'), 10),
+              uuid: decodeURIComponent(u.username)
             };
-            c.tls.insecure = true;
-            var pin = u.searchParams.get('pinSHA256');
-            if (pin) c.tls.pinSHA256 = pin;
-            require('fs').writeFileSync('hy2-config.json', JSON.stringify(c));
+
+            var flow = p.get('flow');
+            if (flow) out.flow = flow;
+
+            // ---------- TLS / REALITY ----------
+            var sec = p.get('security') || 'none';
+            var tls = null;
+
+            if (sec === 'tls' || sec === 'reality') {
+              tls = { enabled: true };
+              var sni = p.get('sni') || p.get('peer') || p.get('host') || u.hostname;
+              tls.server_name = sni;
+
+              if (p.get('allowInsecure') === '1' || p.get('insecure') === '1') tls.insecure = true;
+
+              var alpn = p.get('alpn');
+              if (alpn) tls.alpn = alpn.split(',').map(function (s) { return s.trim(); }).filter(Boolean);
+
+              var fp = p.get('fp');
+              if (fp && fp !== 'none') tls.utls = { enabled: true, fingerprint: fp };
+            }
+
+            if (sec === 'reality') {
+              tls.reality = { enabled: true, public_key: p.get('pbk') || '' };
+              var sid = p.get('sid');
+              if (sid !== null && sid !== undefined) tls.reality.short_id = sid;
+              if (p.get('spx')) tls.reality.spider_x = p.get('spx');
+            }
+
+            if (tls) out.tls = tls;
+
+            // ---------- 传输层 ----------
+            var net = p.get('type') || 'tcp';
+            if (net === 'ws') {
+              var tr = { type: 'ws', path: p.get('path') || '/' };
+              var host = p.get('host');
+              if (host) tr.headers = { Host: host };
+              if (p.get('ed')) tr.max_early_data = parseInt(p.get('ed'), 10);
+              if (p.get('eh')) tr.early_data_header_name = p.get('eh');
+              out.transport = tr;
+            } else if (net === 'grpc') {
+              out.transport = { type: 'grpc', service_name: p.get('serviceName') || '' };
+            } else if (net === 'http' || net === 'h2') {
+              var h = { type: 'http' };
+              if (p.get('path')) h.path = p.get('path');
+              if (p.get('host')) h.host = p.get('host').split(',');
+              out.transport = h;
+            }
+
+            var cfg = {
+              log: { level: 'info', timestamp: true },
+              inbounds: [
+                { type: 'socks', tag: 'socks-in', listen: '127.0.0.1', listen_port: 1080 },
+                { type: 'http', tag: 'http-in', listen: '127.0.0.1', listen_port: 1081 }
+              ],
+              outbounds: [out, { type: 'direct', tag: 'direct' }]
+            };
+            require('fs').writeFileSync('vless-config.json', JSON.stringify(cfg, null, 2));
+            console.log('已生成 vless-config.json');
             "
+            ./sing-box check -c vless-config.json
       - run:
-          name: Start hy2 Client
+          name: Start VLESS Client
           command: |
-            if [ -z "$HY2_URL" ]; then exit 0; fi
-            echo "=== Testing hy2 connection ==="
-            timeout 5 ./hysteria client -c hy2-config.json 2>&1 || echo "hy2 test attempt finished (expected if no traffic)"
-            echo "=== Starting hy2 in background ==="
-            ./hysteria client -c hy2-config.json > /tmp/hy2.log 2>&1 &
-            sleep 4
-            echo "=== Checking SOCKS5 port ==="
-            ss -tlnp | grep 1080 && echo "OK: port 1080 is listening" || echo "FAIL: port 1080 not listening"
-            echo "=== hy2 log ==="
-            cat /tmp/hy2.log 2>/dev/null || echo "(no log)"
+            if [ -z "$VLESS_URL" ]; then exit 0; fi
+            echo "=== Starting sing-box ==="
+            ./sing-box run -c vless-config.json > /tmp/vless.log 2>&1 &
+            sleep 5
+            echo "=== Checking ports ==="
+            ss -tlnp | grep -E '1080|1081' && echo "OK: proxy ports listening" || echo "FAIL: proxy ports not listening"
+            echo "=== sing-box log ==="
+            cat /tmp/vless.log 2>/dev/null || echo "(no log)"
+            echo "=== egress test ==="
+            curl -s --max-time 15 --socks5-hostname 127.0.0.1:1080 https://www.cloudflare.com/cdn-cgi/trace | head -5 \
+              && echo "OK: vless proxy works" || echo "WARN: egress test failed"
       - restore_cache:
           keys:
             - renewal-state-cache-
       - run:
           name: Run Renew Script
           command: |
-            if [ -n "$HY2_URL" ]; then
+            if [ -n "$VLESS_URL" ]; then
               export HTTP_PROXY=socks5://127.0.0.1:1080
             fi
             xvfb-run --auto-servernum --server-args="-screen 0 1280x720x24" node action_renew.js
@@ -82,4 +149,3 @@ jobs:
           key: renewal-state-cache-{{ .BuildNum }}
           paths:
             - renewal-state.json
-
