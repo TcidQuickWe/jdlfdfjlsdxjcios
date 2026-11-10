@@ -160,9 +160,9 @@ jobs:
       uses: actions/cache@v4
       with:
         path: renewal-state.json
-        key: renewal-state-${{ github.run_id }}
+        key: renewal-state-v2-${{ github.run_id }}
         restore-keys: |
-          renewal-state-
+          renewal-state-v2-
 
     - name: Run Renew Script
       env:

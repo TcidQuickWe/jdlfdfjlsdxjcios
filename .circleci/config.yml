@@ -137,31 +137,75 @@ jobs:
             console.log('已生成 vless-config.json');
             "
             ./sing-box check -c vless-config.json
-      - run:
-          name: Start VLESS Client
-          command: |
-            if [ -z "$VLESS_URL" ]; then exit 0; fi
-            echo "=== Starting sing-box ==="
-            ./sing-box run -c vless-config.json > /tmp/vless.log 2>&1 &
-            sleep 5
-            echo "=== Checking ports ==="
-            ss -tlnp | grep -E '1080|1081' && echo "OK: proxy ports listening" || echo "FAIL: proxy ports not listening"
-            echo "=== sing-box log ==="
-            cat /tmp/vless.log 2>/dev/null || echo "(no log)"
-            echo "=== egress test ==="
-            curl -s --max-time 15 --socks5-hostname 127.0.0.1:1080 https://www.cloudflare.com/cdn-cgi/trace | head -5 \
-              && echo "OK: vless proxy works" || echo "WARN: egress test failed"
       - restore_cache:
           keys:
-            - renewal-state-cache-
+            - renewal-state-v2-
       - run:
+          # 关键：sing-box 与 node 必须在同一个 run 步骤内。
+          # CircleCI 每个 run 是独立 shell，上一步用 & 后台起的进程
+          # 到下一步就没了，浏览器会报 ERR_SOCKS_CONNECTION_FAILED。
           name: Run Renew Script
           command: |
+            set -o pipefail
+
+            SB_PID=""
+            cleanup() {
+              if [ -n "$SB_PID" ] && kill -0 "$SB_PID" 2>/dev/null; then
+                kill "$SB_PID" 2>/dev/null || true
+                wait "$SB_PID" 2>/dev/null || true
+              fi
+            }
+            trap cleanup EXIT INT TERM
+
             if [ -n "$VLESS_URL" ]; then
+              echo "=== Starting sing-box ==="
+              ./sing-box run -c vless-config.json > /tmp/vless.log 2>&1 &
+              SB_PID=$!
+              echo "  pid=$SB_PID"
+
+              # 等端口真正就绪（最多 20s），而不是盲等固定秒数
+              ready=0
+              for n in $(seq 1 40); do
+                if (echo > /dev/tcp/127.0.0.1/1080) >/dev/null 2>&1; then
+                  ready=1
+                  echo "  port 1080 ready (attempt $n)"
+                  break
+                fi
+                if ! kill -0 "$SB_PID" 2>/dev/null; then
+                  echo "  ERROR: sing-box exited prematurely"
+                  cat /tmp/vless.log 2>/dev/null || true
+                  exit 1
+                fi
+                sleep 0.5
+              done
+
+              if [ "$ready" -ne 1 ]; then
+                echo "  ERROR: proxy port 1080 not ready in 20s"
+                cat /tmp/vless.log 2>/dev/null || true
+                exit 1
+              fi
+
+              echo "=== sing-box log ==="
+              cat /tmp/vless.log 2>/dev/null || echo "(no log)"
+
+              echo "=== egress test ==="
+              if curl -sf --max-time 20 --socks5-hostname 127.0.0.1:1080 \
+                   https://www.cloudflare.com/cdn-cgi/trace > /tmp/egress.txt 2>&1; then
+                echo "  OK: vless proxy works"
+                head -5 /tmp/egress.txt
+              else
+                echo "  ERROR: egress test failed, aborting (avoid browser socks failure)"
+                cat /tmp/egress.txt 2>/dev/null || true
+                exit 1
+              fi
+
               export HTTP_PROXY=socks5://127.0.0.1:1080
+            else
+              echo "VLESS_URL not set, running without proxy"
             fi
+
             xvfb-run --auto-servernum --server-args="-screen 0 1280x720x24" node action_renew.js
       - save_cache:
-          key: renewal-state-cache-{{ .BuildNum }}
+          key: renewal-state-v2-{{ .BuildNum }}
           paths:
             - renewal-state.json
