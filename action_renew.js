@@ -112,31 +112,98 @@ function loadRenewalState() {
     return null;
 }
 
-function saveRenewalState(skipUntilISO) {
+function saveRenewalState(skipUntilISO, source) {
     try {
         fs.writeFileSync(STATE_FILE, JSON.stringify({
             skipUntil: skipUntilISO,
+            source: source || 'unknown',   // 记录来源文本，便于排查
             updatedAt: new Date().toISOString()
         }));
-        console.log(`[缓存] 续期状态已保存, 下次跳过至: ${skipUntilISO}`);
+        console.log(`[缓存] 续期状态已保存, 下次跳过至: ${skipUntilISO} (来源: ${source || 'N/A'})`);
     } catch (e) {
         console.error('[缓存] 保存状态失败:', e.message);
     }
 }
 
+// 手动忽略缓存：设置 FORCE_RENEW=1 可绕过缓存强制运行一次
+const FORCE_RENEW = process.env.FORCE_RENEW === '1' || process.env.FORCE_RENEW === 'true';
+
+const MONTHS = {
+    jan: 0, feb: 1, mar: 2, apr: 3, may: 4, jun: 5,
+    jul: 6, aug: 7, sep: 8, oct: 9, nov: 10, dec: 11,
+    january: 0, february: 1, march: 2, april: 3, june: 5, july: 6,
+    august: 7, september: 8, october: 9, november: 10, december: 11
+};
+
+// 把各种日期文案解析成 UTC 零点的 Date。解析失败返回 null（不再伪造日期）
 function parseNextDate(dateStr) {
-    let d = new Date(dateStr);
-    if (!isNaN(d.getTime()) && d.getFullYear() >= 2024) {
-        return new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()));
+    if (!dateStr) return null;
+    let s = String(dateStr).trim();
+    if (!s) return null;
+
+    // 去掉常见前缀噪声，取最后一段像日期的内容
+    s = s.replace(/^.*?(?:as of|available|until|on)\s*[:：]?\s*/i, '').trim();
+    // 去掉序数后缀 13th -> 13
+    s = s.replace(/(\d+)(st|nd|rd|th)/gi, '$1');
+    s = s.replace(/[,]/g, ' ').replace(/\s+/g, ' ').trim();
+
+    let y = null, m = null, d = null;
+
+    // 1) ISO / 斜杠格式: 2026-11-13, 2026/11/13
+    let mm = s.match(/(\d{4})[-/](\d{1,2})[-/](\d{1,2})/);
+    if (mm) {
+        y = +mm[1]; m = +mm[2] - 1; d = +mm[3];
     }
-    d = new Date(dateStr + ' ' + new Date().getFullYear());
-    if (!isNaN(d.getTime())) {
-        return new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()));
+
+    // 2) 美式: 11/13/2026
+    if (y === null) {
+        mm = s.match(/(\d{1,2})[/-](\d{1,2})[/-](\d{4})/);
+        if (mm) { m = +mm[1] - 1; d = +mm[2]; y = +mm[3]; }
     }
-    const fallback = new Date();
-    fallback.setUTCDate(fallback.getUTCDate() + 1);
-    fallback.setUTCHours(0, 0, 0, 0);
-    return fallback;
+
+    // 3) 英文月份: November 13 2026 / Nov 13 / 13 Nov 2026
+    // 注意匹配顺序：先试「日 月」形式（13 Nov），
+    // 否则 "13 Nov 2026" 会被「月 日」正则误读成 月份=13（无效）。
+    if (y === null) {
+        const rev = s.match(/(\d{1,2})\s+([A-Za-z]{3,9})(?:\s+(\d{4}))?/);
+        const fwd = s.match(/([A-Za-z]{3,9})\s+(\d{1,2})(?:\s+(\d{4}))?/);
+        if (rev && MONTHS[rev[2].toLowerCase()] !== undefined) {
+            d = +rev[1]; m = MONTHS[rev[2].toLowerCase()];
+            y = rev[3] ? +rev[3] : null;
+        } else if (fwd && MONTHS[fwd[1].toLowerCase()] !== undefined) {
+            m = MONTHS[fwd[1].toLowerCase()]; d = +fwd[2];
+            y = fwd[3] ? +fwd[3] : null;
+        }
+    }
+
+    // 4) 中文: 11月13日 / 2026年11月13日
+    if (y === null) {
+        mm = s.match(/(?:(\d{4})\s*年\s*)?(\d{1,2})\s*月\s*(\d{1,2})\s*日?/);
+        if (mm) {
+            y = mm[1] ? +mm[1] : null;
+            m = +mm[2] - 1; d = +mm[3];
+        }
+    }
+
+    if (m === null || d === null) {
+        console.log('[日期] 无法解析: ' + JSON.stringify(dateStr));
+        return null;
+    }
+
+    if (y === null) {
+        // 没写年份：如果该日期已过去，则认为是明年
+        const now = new Date();
+        y = now.getUTCFullYear();
+    }
+
+    if (y < 2024 || y > 2100 || m < 0 || m > 11 || d < 1 || d > 31) {
+        console.log('[日期] 数值异常: ' + JSON.stringify(dateStr) + ' -> y=' + y + ' m=' + m + ' d=' + d);
+        return null;
+    }
+
+    const out = new Date(Date.UTC(y, m, d));
+    if (isNaN(out.getTime())) return null;
+    return out;
 }
 
 function checkPort(port) {
@@ -228,19 +295,37 @@ function getUsers() {
     }
 
     // 检查续期缓存: 如果还没到可用时间, 直接跳过
+    //
+    // 时区说明：CI（GitHub Actions / CircleCI）跑在 UTC，
+    // 但站点可用时间是以北京时间为准的"日期"。
+    // 若用 getUTCDate() 判断"今天"，在北京时间 00:00-08:00 这段
+    // UTC 还停留在前一天，会白白多跳过一次运行。
+    // 这里统一换算到 UTC+8 再比较日期。
+    const TZ_OFFSET_MS = 8 * 60 * 60 * 1000;
+    const toBeijingDay = (dt) => {
+        const t = new Date(dt.getTime() + TZ_OFFSET_MS);
+        return Date.UTC(t.getUTCFullYear(), t.getUTCMonth(), t.getUTCDate());
+    };
+
     const state = loadRenewalState();
     let staleCache = true;
-    if (state && state.skipUntil) {
+
+    if (FORCE_RENEW) {
+        console.log('[缓存] FORCE_RENEW=1, 忽略缓存强制运行。');
+        staleCache = false;
+    } else if (state && state.skipUntil) {
         const skipDate = new Date(state.skipUntil);
-        if (skipDate.getFullYear() < 2024) {
-            console.log(`[缓存] skipUntil(${state.skipUntil}) 年份异常, 忽略旧缓存。`);
+        if (isNaN(skipDate.getTime()) || skipDate.getFullYear() < 2024) {
+            console.log(`[缓存] skipUntil(${state.skipUntil}) 无效, 忽略旧缓存。`);
         } else {
-            const skipDay = new Date(Date.UTC(skipDate.getUTCFullYear(), skipDate.getUTCMonth(), skipDate.getUTCDate()));
-            const todayDay = new Date(Date.UTC(new Date().getUTCFullYear(), new Date().getUTCMonth(), new Date().getUTCDate()));
+            const skipDay = toBeijingDay(skipDate);
+            const todayDay = toBeijingDay(new Date());
             if (skipDay > todayDay) {
-                console.log(`[缓存] 上次检查显示下次可用时间: ${state.skipUntil}, 跳过本次运行。`);
+                const daysLeft = Math.round((skipDay - todayDay) / 86400000);
+                console.log(`[缓存] 下次可用(北京): ${new Date(skipDay).toISOString().slice(0, 10)}, 今天(北京): ${new Date(todayDay).toISOString().slice(0, 10)}, 还差 ${daysLeft} 天, 跳过本次运行。`);
                 process.exit(0);
             }
+            console.log(`[缓存] 缓存已到期(可用日 ${new Date(skipDay).toISOString().slice(0, 10)} <= 今天 ${new Date(todayDay).toISOString().slice(0, 10)}), 继续执行。`);
             staleCache = false;
         }
     }
@@ -557,14 +642,32 @@ function getUsers() {
                                 }
                                 if (notTimeVisible) {
                                     const text = await notTimeLoc.innerText();
-                                    const match = text.match(/(?:as of\s+|:?\s*)(.*?)(?:\s*\(|$)/);
-                                    let dateStr = match ? match[1] : 'Unknown Date';
+                                    // 从整段文案中提取日期部分。
+                                    // 原正则 /(?:as of\s+|:?\s*)(.*?)(?:\s*\(|$)/ 缺少前置锚点，
+                                    // 会把 "You can't renew..." 整段吞进去，导致后续解析失败。
+                                    let dateStr = 'Unknown Date';
+                                    const patterns = [
+                                        /as of\s+([^\n(]+)/i,                              // as of November 13, 2026
+                                        /available\s*[:：]?\s*([^\n(]+)/i,                 // Available: ...
+                                        /下次可用\s*[:：]?\s*([^\n，,。]+)/,                 // 下次可用: 2026-11-13
+                                        /(\d{4}[-/]\d{1,2}[-/]\d{1,2})/,                   // 2026-11-13
+                                        /(\d{1,2}\s*月\s*\d{1,2}\s*日)/,                   // 11月13日
+                                        /([A-Za-z]{3,9}\s+\d{1,2}(?:st|nd|rd|th)?,?\s*\d{4})/  // November 13, 2026
+                                    ];
+                                    for (const re of patterns) {
+                                        const mm = text.match(re);
+                                        if (mm && mm[1]) { dateStr = mm[1].trim(); break; }
+                                    }
                                     console.log(`   >> ⏳ 暂无法续期。下次可用时间: ${dateStr}`);
 
-                                    // 保存下次可用时间到缓存
+                                    // 保存下次可用时间到缓存（解析失败则不写缓存，避免伪造日期）
                                     if (dateStr !== 'Unknown Date') {
                                         const nextDate = parseNextDate(dateStr);
-                                        saveRenewalState(nextDate.toISOString());
+                                        if (nextDate) {
+                                            saveRenewalState(nextDate.toISOString(), dateStr);
+                                        } else {
+                                            console.log('   >> ⚠️ 日期解析失败，不写缓存（本次不做跳过判断）');
+                                        }
                                     }
 
                                     await sendTelegramMessage(`⏳ *暂无法续期 (跳过)*\n用户: ${i + 1}\n原因: 还没到时间\n下次可用: ${dateStr}`);
